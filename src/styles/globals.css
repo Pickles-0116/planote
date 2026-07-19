@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   Planote 全局样式
+   ============================================ */
+
+:root {
+  --color-bg: #fafaf9;        /* stone-50 */
+  --color-surface: #ffffff;
+  --color-border: #e7e5e4;    /* stone-200 */
+  --color-text: #0f172a;      /* brand-900 */
+  --color-text-muted: #64748b; /* brand-500 */
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 2px 8px rgba(15, 23, 42, 0.04);
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.05), 0 4px 16px rgba(15, 23, 42, 0.04);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-stone-50 text-brand-900 antialiased dark:bg-stone-900 dark:text-stone-100;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+/* ============================================
+   通用工具类
+   ============================================ */
+
+.glass {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
+/* 行数限制（Tailwind v3 内置 line-clamp 需 plugin，这里手写兼容） */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 入场动画 */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeUp {
+  animation: fadeUp 0.4s ease-out both;
+}
+
+/* 延迟变体（用于瀑布式入场） */
+.animate-delay-50 { animation-delay: 50ms; }
+.animate-delay-100 { animation-delay: 100ms; }
+.animate-delay-150 { animation-delay: 150ms; }
+.animate-delay-200 { animation-delay: 200ms; }
+.animate-delay-250 { animation-delay: 250ms; }
+.animate-delay-300 { animation-delay: 300ms; }
+.animate-delay-350 { animation-delay: 350ms; }
+.animate-delay-400 { animation-delay: 400ms; }
+
+/* ============================================
+   100% 完成横幅扫光（add-plan-detail-view）
+   ============================================ */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ============================================
+   进度环 100% 触发 0→C 描边动画
+   ============================================ */
+@keyframes progress-complete {
+  from { stroke-dashoffset: var(--c, 9999); }
+  to { stroke-dashoffset: 0; }
+}
+.animate-progress-complete {
+  animation: progress-complete 0.6s ease-out;
+}
+
+/* ============================================
+   抽屉从右滑入（add-plan-detail-view）
+   ============================================ */
+@keyframes drawerSlideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.animate-drawer-slideIn {
+  animation: drawerSlideIn 0.3s ease-out;
+}

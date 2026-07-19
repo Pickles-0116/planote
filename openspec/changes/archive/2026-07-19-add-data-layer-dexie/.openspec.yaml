@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-07-19
+goal: 让所有数据访问走 Repository 接口，UI/Store 不直接调 Dexie；为 Sprint 2+
+  的计划/博客/看板模块提供契约清晰、可替换、可测试的数据底座
