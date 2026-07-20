@@ -34,7 +34,6 @@ import { useTodayFocus } from '@/stores/hooks/useTodayFocus';
 import { useItemsForPlan } from '@/stores/hooks/useItemsForPlan';
 import { useUpcomingPlans } from '@/stores/hooks/useUpcomingPlans';
 import { useRecentBlogs } from '@/stores/hooks/useRecentBlogs';
-import { useRecentActivity } from '@/stores/hooks/useRecentActivity';
 import type { ItemStatus, UrgencyLevel } from '@/types/domain';
 
 /* ============================================================
@@ -60,13 +59,6 @@ const URGENCY_DAYS: Record<UrgencyLevel, string> = {
   orange: '1-3 天',
   yellow: '4-7 天',
   none: '未来',
-};
-
-const ACTIVITY_BG: Record<string, string> = {
-  emerald: 'bg-emerald-500',
-  blue: 'bg-blue-500',
-  purple: 'bg-purple-500',
-  amber: 'bg-amber-500',
 };
 
 /* ============================================================
@@ -225,15 +217,12 @@ export default function Dashboard() {
   const focusItems = useItemsForPlan(focus?.plan.id);
   const upcoming = useUpcomingPlans(3);
   const recentBlogs = useRecentBlogs(3);
-  const activities = useRecentActivity(4);
-
   const isLoading =
     stats === undefined ||
     focus === undefined ||
     focusItems === undefined ||
     upcoming === undefined ||
-    recentBlogs === undefined ||
-    activities === undefined;
+    recentBlogs === undefined;
 
   if (isLoading) {
     return <DashboardSkeleton />;
@@ -425,30 +414,32 @@ export default function Dashboard() {
 
         {/* 右 1/3 */}
         <div className="space-y-6">
-          {/* 完成提醒（v1.0 仍为静态；Sprint 2 接计划模块后改为数据驱动） */}
-          <section className="bg-gradient-to-br from-accent-50 to-amber-50 dark:from-accent-900/20 dark:to-amber-900/20 border border-accent-200 dark:border-accent-800/40 rounded-2xl p-5 animate-fadeUp animate-delay-250">
-            <div className="flex items-start gap-3 mb-3">
-              <div className="w-8 h-8 rounded-full bg-accent-500 flex items-center justify-center flex-shrink-0">
-                <Sparkles className="text-white" size={14} />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-accent-900 dark:text-accent-200">可以总结一下了 ✨</div>
-                <div className="text-xs text-accent-700/80 dark:text-accent-300/80 mt-0.5">
-                  完成计划后，把这段经历变成博客
+          {/* 完成提醒：仅在有已完成计划时显示 */}
+          {stats.completedItems > 0 && (
+            <section className="bg-gradient-to-br from-accent-50 to-amber-50 dark:from-accent-900/20 dark:to-amber-900/20 border border-accent-200 dark:border-accent-800/40 rounded-2xl p-5 animate-fadeUp animate-delay-250">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-8 h-8 rounded-full bg-accent-500 flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="text-white" size={14} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-accent-900 dark:text-accent-200">可以总结一下了 ✨</div>
+                  <div className="text-xs text-accent-700/80 dark:text-accent-300/80 mt-0.5">
+                    完成计划后，把这段经历变成博客
+                  </div>
                 </div>
               </div>
-            </div>
-            <p className="text-xs text-accent-800/80 dark:text-accent-200/80 mb-3 leading-relaxed">
-              写博客是一个很好的复盘方式，让完成计划的过程沉淀为可分享的内容。
-            </p>
-            <Link
-              to="/blogs/new"
-              className="w-full py-2 bg-accent-500 hover:bg-accent-600 text-white text-sm font-medium rounded-xl transition flex items-center justify-center gap-2"
-            >
-              <Wand2 size={14} />
-              写一篇博客
-            </Link>
-          </section>
+              <p className="text-xs text-accent-800/80 dark:text-accent-200/80 mb-3 leading-relaxed">
+                写博客是一个很好的复盘方式，让完成计划的过程沉淀为可分享的内容。
+              </p>
+              <Link
+                to="/blogs/new"
+                className="w-full py-2 bg-accent-500 hover:bg-accent-600 text-white text-sm font-medium rounded-xl transition flex items-center justify-center gap-2"
+              >
+                <Wand2 size={14} />
+                写一篇博客
+              </Link>
+            </section>
+          )}
 
           {/* 即将到期 */}
           <Card className="animate-delay-350">
@@ -486,32 +477,6 @@ export default function Dashboard() {
                     </div>
                     <ChevronRight className="text-brand-300 dark:text-stone-600" size={14} />
                   </Link>
-                ))}
-              </div>
-            )}
-          </Card>
-
-          {/* 活动流 */}
-          <Card className="animate-delay-400">
-            <h3 className="text-sm font-semibold mb-4 text-brand-900 dark:text-stone-100">最近活动</h3>
-            {activities.length === 0 ? (
-              <div className="text-xs text-brand-400 dark:text-stone-500 text-center py-4">
-                还没有活动记录
-              </div>
-            ) : (
-              <div className="space-y-3 text-xs">
-                {activities.map((a) => (
-                  <div key={a.id} className="flex gap-2.5">
-                    <div
-                      className={`w-1.5 h-1.5 rounded-full ${ACTIVITY_BG[a.color]} mt-1.5 flex-shrink-0`}
-                    />
-                    <div>
-                      <div className="text-brand-700 dark:text-stone-200">{a.text}</div>
-                      <div className="text-[10px] text-brand-400 dark:text-stone-500 mt-0.5">
-                        {a.relativeTime}
-                      </div>
-                    </div>
-                  </div>
                 ))}
               </div>
             )}

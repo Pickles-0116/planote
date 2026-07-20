@@ -1,5 +1,5 @@
-import { Link, useNavigate } from 'react-router-dom';
-import { Search, Bell, Plus, Sun, Moon, Monitor } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Sun, Moon, Monitor } from 'lucide-react';
 import { useTheme } from '@/features/settings/hooks/useTheme';
 import { cn } from '@/lib/utils';
 
@@ -28,33 +28,8 @@ export default function Header() {
 
   return (
     <header className="h-16 bg-white/80 dark:bg-stone-900/80 glass border-b border-stone-200 dark:border-stone-700 flex items-center px-8 gap-4">
-      {/* 搜索框 */}
-      <div className="flex-1 max-w-md">
-        <div className="relative">
-          <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-400 dark:text-stone-500"
-            size={16}
-          />
-          <input
-            type="text"
-            placeholder="搜索计划、博客、标签..."
-            className="w-full pl-9 pr-12 py-2 bg-stone-100 dark:bg-stone-800 border border-transparent rounded-xl text-sm text-brand-900 dark:text-stone-100 focus:outline-none focus:bg-white dark:focus:bg-stone-700 focus:border-brand-300 dark:focus:border-stone-500 transition"
-          />
-          <kbd className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-brand-400 dark:text-stone-400 bg-white dark:bg-stone-700 border border-stone-200 dark:border-stone-600 px-1.5 py-0.5 rounded">
-            ⌘K
-          </kbd>
-        </div>
-      </div>
-
-      {/* 通知 */}
-      <button
-        type="button"
-        className="w-9 h-9 rounded-xl hover:bg-stone-100 dark:hover:bg-stone-800 flex items-center justify-center text-brand-500 dark:text-stone-400 relative"
-        aria-label="通知"
-      >
-        <Bell size={18} />
-        <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-accent-500" />
-      </button>
+      {/* 占位（保持布局对齐，后续可放面包屑或项目名） */}
+      <div className="flex-1" />
 
       {/* 主题入口（v1.0 简化：3 选项下拉） */}
       <div
@@ -86,16 +61,6 @@ export default function Header() {
         })}
         <ResolvedBadge />
       </div>
-
-      {/* 新建（跳转到计划编辑） */}
-      <Link
-        to="/plans/new"
-        className="w-9 h-9 rounded-xl hover:bg-stone-100 dark:hover:bg-stone-800 flex items-center justify-center text-brand-500 dark:text-stone-400"
-        title="新建计划"
-        aria-label="新建"
-      >
-        <Plus size={18} />
-      </Link>
 
       {/* 设置入口（深链跳到主题） */}
       <button

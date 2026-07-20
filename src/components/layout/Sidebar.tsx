@@ -24,13 +24,6 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/kanban', label: '看板', icon: <Kanban size={16} /> },
 ];
 
-const CATEGORY_NAV = [
-  { label: '每日', color: 'bg-emerald-500' },
-  { label: '每月', color: 'bg-blue-500' },
-  { label: '每年', color: 'bg-purple-500' },
-  { label: '一次性', color: 'bg-amber-500' },
-];
-
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
     'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition',
@@ -67,21 +60,6 @@ export default function Sidebar() {
               </span>
             )}
           </NavLink>
-        ))}
-
-        {/* 分类 */}
-        <div className="pt-4 pb-2 px-3 text-[10px] font-semibold text-brand-400 dark:text-stone-500 tracking-wider uppercase">
-          分类
-        </div>
-        {CATEGORY_NAV.map((c) => (
-          <a
-            key={c.label}
-            href="#"
-            className="flex items-center gap-3 px-3 py-2 rounded-xl text-brand-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition"
-          >
-            <span className={cn('w-2 h-2 rounded-full', c.color)} />
-            <span className="text-sm">{c.label}</span>
-          </a>
         ))}
 
         {/* 其他 */}
