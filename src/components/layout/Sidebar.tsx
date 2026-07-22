@@ -19,7 +19,7 @@ interface NavItem {
 
 const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: '仪表盘', icon: <LayoutDashboard size={16} />, end: true },
-  { to: '/plans', label: '计划', icon: <Target size={16} />, badge: '100' },
+  { to: '/plans', label: '计划', icon: <Target size={16} /> },
   { to: '/blogs', label: '博客', icon: <Newspaper size={16} /> },
   { to: '/kanban', label: '看板', icon: <Kanban size={16} /> },
 ];

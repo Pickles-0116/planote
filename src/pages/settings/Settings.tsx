@@ -18,6 +18,7 @@ import ThemeSettings from './ThemeSettings';
 import DataSettings from './DataSettings';
 import AboutSettings from './AboutSettings';
 import FeedbackSettings from './FeedbackSettings';
+import DataInspector from '@/features/settings/components/DataInspector';
 
 type SettingsKey = 'theme' | 'data' | 'about' | 'feedback';
 
@@ -114,11 +115,14 @@ export default function Settings(): JSX.Element {
       </nav>
 
       {/* 右侧内容 */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-6">
         {activeKey === 'theme' && <ThemeSettings />}
         {activeKey === 'data' && <DataSettings />}
         {activeKey === 'about' && <AboutSettings />}
         {activeKey === 'feedback' && <FeedbackSettings />}
+
+        {/* 调试区块：始终显示，让用户直观确认 IndexedDB 数据状态 */}
+        <DataInspector />
       </div>
     </div>
   );
