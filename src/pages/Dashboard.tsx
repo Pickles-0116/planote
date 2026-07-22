@@ -219,8 +219,6 @@ export default function Dashboard() {
   const recentBlogs = useRecentBlogs(3);
   const isLoading =
     stats === undefined ||
-    focus === undefined ||
-    focusItems === undefined ||
     upcoming === undefined ||
     recentBlogs === undefined;
 
@@ -337,7 +335,7 @@ export default function Dashboard() {
                 <h2 className="text-xl font-bold mb-1">{focus.plan.title}</h2>
                 <p className="text-sm text-white/70 mb-5">
                   {focus.plan.description || '关注此计划以推进进度'} · 还剩{' '}
-                  {focusItems.filter((i) => i.status !== 'done').length} 项事项
+                  {(focusItems ?? []).filter((i) => i.status !== 'done').length} 项事项
                 </p>
 
                 <div className="flex items-center gap-3 mb-5">
@@ -351,7 +349,7 @@ export default function Dashboard() {
                 </div>
 
                 <div className="space-y-2">
-                  {focusItems.slice(0, 4).map((item) => (
+                  {(focusItems ?? []).slice(0, 4).map((item) => (
                     <TodoRow
                       key={item.id}
                       item={{
@@ -361,7 +359,7 @@ export default function Dashboard() {
                       }}
                     />
                   ))}
-                  {focusItems.length === 0 && (
+                  {(focusItems ?? []).length === 0 && (
                     <div className="text-xs text-white/50 py-2">
                       该计划还没有事项
                     </div>
