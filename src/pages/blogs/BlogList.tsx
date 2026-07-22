@@ -17,7 +17,7 @@
  *   - 0 blog + 有 filter → compact variant EmptyState + 清除筛选
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Notebook, SearchX } from 'lucide-react';
 import EmptyState from '@/components/shell/EmptyState';
@@ -25,6 +25,8 @@ import Skeleton from '@/components/shell/Skeleton';
 import BlogCard from '@/features/blog/components/BlogCard';
 import BlogListFilters from '@/features/blog/components/BlogListFilters';
 import BlogListToolbar from '@/features/blog/components/BlogListToolbar';
+import NewBlogMenu from '@/features/blog/components/NewBlogMenu';
+import ImportMarkdownButton from '@/features/blog/components/ImportMarkdownButton';
 import { useFilteredBlogs } from '@/features/blog/hooks/useFilteredBlogs';
 import { useBlogs, useFrameworks, useTags, useUIStore } from '@/stores';
 import type { Framework, ID } from '@/types/domain';
@@ -109,16 +111,25 @@ export default function BlogList(): JSX.Element {
   // 0 blog + 无 filter → 引导创建
   if (blogs.length === 0 && !hasFilters) {
     return (
-      <EmptyState
-        icon={Notebook}
-        title="还没有博客"
-        description="用富文本写下你的第一篇复盘或总结吧"
-        action={{
-          label: '写新博客',
-          onClick: () => navigate('/blogs/new'),
-        }}
-        variant="illustration"
-      />
+      <div className="space-y-6">
+        <PageHeader count={0} />
+        <EmptyState
+          icon={Notebook}
+          title="还没有博客"
+          description="用富文本写下你的第一篇复盘，或从外部 Markdown 导入已有笔记"
+          variant="illustration"
+        />
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => navigate('/blogs/new')}
+            className="px-4 py-2.5 rounded-xl bg-brand-900 dark:bg-stone-100 text-white dark:text-stone-900 text-sm font-medium hover:bg-brand-800 dark:hover:bg-stone-200 transition shadow-sm"
+          >
+            写新博客
+          </button>
+          <ImportMarkdownButton />
+        </div>
+      </div>
     );
   }
 
@@ -164,7 +175,9 @@ export default function BlogList(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <PageHeader count={blogs.length} />
+      <PageHeader count={blogs.length}>
+        <NewBlogMenu />
+      </PageHeader>
       <BlogListFilters
         query={query}
         onQueryChange={setQuery}
@@ -219,7 +232,7 @@ export default function BlogList(): JSX.Element {
 /* ============================================================
  * 标题栏
  * ============================================================ */
-function PageHeader({ count }: { count: number }): JSX.Element {
+function PageHeader({ count, children }: { count: number; children?: ReactNode }): JSX.Element {
   return (
     <div className="flex items-end justify-between animate-fadeUp">
       <div>
@@ -229,6 +242,7 @@ function PageHeader({ count }: { count: number }): JSX.Element {
           <span className="font-semibold text-brand-900 dark:text-stone-100">{count}</span> 篇
         </p>
       </div>
+      {children && <div className="flex items-center gap-2">{children}</div>}
     </div>
   );
 }
