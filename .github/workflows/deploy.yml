@@ -48,9 +48,6 @@ jobs:
         # 复制 index.html 为 404.html，让任意路径都回退到 SPA 入口。
         run: cp dist/index.html dist/404.html
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
