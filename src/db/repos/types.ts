@@ -27,6 +27,14 @@ import type {
   BlogSource,
   FrameworkCategory,
   UrgencyLevel,
+  BlogTemplate,
+  AICallLog,
+  AIGenerateMode,
+  TemplateCategory,
+  AIStyleParams,
+  Collection,
+  CollectionItem,
+  CollectionEntityType,
 } from '@/types/domain';
 
 // ========== 错误类型 ==========
@@ -193,11 +201,16 @@ export interface FrameworkRepository {
 /** Tag 创建入参：去掉 id / usageCount / createdAt。 */
 export type TagCreateInput = Omit<Tag, 'id' | 'usageCount' | 'createdAt'>;
 
+/** Tag 更新入参。 */
+export type TagUpdatePatch = Partial<Pick<Tag, 'name' | 'color'>>;
+
 /** 标签数据访问接口。 */
 export interface TagRepository {
   /** 按 usageCount 降序。 */
   list(): Promise<Tag[]>;
   create(input: TagCreateInput): Promise<Tag>;
+  /** 更新标签（名称/颜色）。 */
+  update(id: ID, patch: TagUpdatePatch): Promise<Tag>;
   /** 删除时级联从所有 Plan / Blog 的 tagIds 中移除。 */
   delete(id: ID): Promise<void>;
   getByName(name: string): Promise<Tag | undefined>;
@@ -221,6 +234,121 @@ export interface AttachmentRepository {
   getObjectURL(id: ID): Promise<string>;
 }
 
+// ========== BlogTemplate Repository ==========
+
+/** BlogTemplate 创建入参。 */
+export type BlogTemplateCreateInput = Omit<
+  BlogTemplate,
+  'id' | 'useCount' | 'lastUsedAt' | 'createdAt' | 'updatedAt'
+>;
+
+/** 博客模板数据访问接口。 */
+export interface BlogTemplateRepository {
+  list(opts?: QueryOptions<BlogTemplate>): Promise<BlogTemplate[]>;
+  get(id: ID): Promise<BlogTemplate | undefined>;
+  create(input: BlogTemplateCreateInput): Promise<BlogTemplate>;
+  update(id: ID, patch: Partial<BlogTemplate>): Promise<BlogTemplate>;
+  delete(id: ID): Promise<void>;
+  duplicate(id: ID): Promise<BlogTemplate>;
+  incrementUseCount(id: ID): Promise<void>;
+  search(q: string): Promise<BlogTemplate[]>;
+  listByCategory(category: TemplateCategory): Promise<BlogTemplate[]>;
+}
+
+// ========== Collection Repository（v1.4-Organize） ==========
+
+/** Collection 创建入参。 */
+export type CollectionCreateInput = Omit<Collection, 'id' | 'sortOrder' | 'createdAt' | 'updatedAt'>;
+
+/** Collection 更新入参。 */
+export type CollectionUpdatePatch = Partial<Pick<Collection, 'name' | 'icon' | 'color'>>;
+
+/** 收藏夹数据访问接口。 */
+export interface CollectionRepository {
+  list(): Promise<Collection[]>;
+  get(id: ID): Promise<Collection | undefined>;
+  create(input: CollectionCreateInput): Promise<Collection>;
+  update(id: ID, patch: CollectionUpdatePatch): Promise<Collection>;
+  /** 级联删除 CollectionItem。 */
+  delete(id: ID): Promise<void>;
+  /** 批量更新 sortOrder（传入有序 ID 数组）。 */
+  reorder(ids: ID[]): Promise<void>;
+
+  addItem(collectionId: ID, entityType: CollectionEntityType, entityId: ID): Promise<CollectionItem>;
+  removeItem(collectionId: ID, entityId: ID): Promise<void>;
+  getItems(collectionId: ID, entityType?: CollectionEntityType): Promise<CollectionItem[]>;
+  /** 获取某个实体所属的所有收藏夹。 */
+  getItemCollections(entityType: CollectionEntityType, entityId: ID): Promise<Collection[]>;
+}
+
+// ========== AICallLog Repository ==========
+
+/** AICallLog 创建入参。 */
+export type AICallLogCreateInput = Omit<AICallLog, 'id' | 'createdAt'>;
+
+/** AI 调用统计数据。 */
+export interface AICallStats {
+  totalCalls: number;
+  promptTokens: number;
+  completionTokens: number;
+  estimatedCost: number | null;
+}
+
+/** AI 调用日志数据访问接口。 */
+export interface AICallLogRepository {
+  create(input: AICallLogCreateInput): Promise<AICallLog>;
+  list(opts?: QueryOptions<AICallLog>): Promise<AICallLog[]>;
+  /** 按时间范围和可选模型 ID 聚合统计。 */
+  getStats(since?: ISODate, modelProfileId?: ID): Promise<AICallStats>;
+  /** 清除全部统计记录。 */
+  clearAll(): Promise<void>;
+}
+
+// ========== ChatSession Repository（v1.5-AI Chat） ==========
+
+import type {
+  ChatSession,
+  ChatMessage,
+  ChatContext,
+  ChatIntent,
+  ChatMode,
+  ActionCard,
+  PlanPreviewData,
+  BlogPreviewData,
+  TemplatePreviewData,
+  DataQueryRequest,
+  SuggestionData,
+} from '@/types/domain';
+
+/** ChatSession 创建入参：去掉 id / 时间戳。 */
+export type ChatSessionCreateInput = Omit<ChatSession, 'id' | 'createdAt' | 'updatedAt'>;
+
+/** ChatSession 更新入参：任意字段可空。 */
+export type ChatSessionUpdatePatch = Partial<ChatSession>;
+
+/**
+ * AI 对话会话数据访问接口。
+ *
+ * 来源：openspec/changes/ai-chat-foundation。
+ */
+export interface ChatSessionRepository {
+  list(opts?: QueryOptions<ChatSession>): Promise<ChatSession[]>;
+  get(id: ID): Promise<ChatSession | undefined>;
+  create(input: ChatSessionCreateInput): Promise<ChatSession>;
+  update(id: ID, patch: ChatSessionUpdatePatch): Promise<ChatSession>;
+  delete(id: ID): Promise<void>;
+  /**
+   * 原子追加一条消息到会话的 messages 数组，并刷新 updatedAt。
+   * 事务内执行，避免并发读-改-写竞态。
+   */
+  appendMessage(sessionId: ID, message: ChatMessage): Promise<ChatSession>;
+  /**
+   * 原子合并 ChatContext 对象，并刷新 updatedAt。
+   * 事务内执行。
+   */
+  updateContext(sessionId: ID, patch: Partial<ChatContext>): Promise<ChatSession>;
+}
+
 // ========== 元类型 re-export（便于调用方只 import 一处） ==========
 
 export type {
@@ -241,4 +369,23 @@ export type {
   BlogSource,
   FrameworkCategory,
   UrgencyLevel,
+  BlogTemplate,
+  AICallLog,
+  AIGenerateMode,
+  TemplateCategory,
+  AIStyleParams,
+  Collection,
+  CollectionItem,
+  CollectionEntityType,
+  ChatSession,
+  ChatMessage,
+  ChatContext,
+  ChatIntent,
+  ChatMode,
+  ActionCard,
+  PlanPreviewData,
+  BlogPreviewData,
+  TemplatePreviewData,
+  DataQueryRequest,
+  SuggestionData,
 };

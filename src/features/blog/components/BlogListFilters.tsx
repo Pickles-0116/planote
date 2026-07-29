@@ -17,24 +17,32 @@
  * 视觉：与 add-plan-list-view 的筛选条对齐（白底 + 圆角 + 边框）。
  */
 
-import { Search, X } from 'lucide-react';
+import { useState } from 'react';
+import { Search, X, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Framework, ID, Tag } from '@/types/domain';
+import type { BlogTemplate, BlogSource, ID, Tag } from '@/types/domain';
 import type { BlogFilters, StatusFilter } from '../hooks/useFilteredBlogs';
 
 interface Props {
   query: string;
   onQueryChange: (q: string) => void;
-  frameworkId: ID | null;
-  onFrameworkChange: (id: ID | null) => void;
+  templateId: ID | null;
+  onTemplateChange: (id: ID | null) => void;
   selectedTagIds: ID[];
   onTagToggle: (id: ID) => void;
   statusFilter: StatusFilter;
   onStatusChange: (s: StatusFilter) => void;
   onClearFilters: () => void;
   hasFilters: boolean;
+  /** v1.4-Organize：高级筛选状态 */
+  source: BlogSource | 'all';
+  onSourceChange: (s: BlogSource | 'all') => void;
+  wordCountRange: { min: number; max: number } | null;
+  onWordCountRangeChange: (r: { min: number; max: number } | null) => void;
+  dateRange: { start: string; end: string } | null;
+  onDateRangeChange: (r: { start: string; end: string } | null) => void;
   /** 可选数据源（无则不渲染对应区块） */
-  frameworks?: Framework[];
+  templates?: BlogTemplate[];
   tags?: Tag[];
 }
 
@@ -45,20 +53,35 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: 'archived', label: '已归档' },
 ];
 
+const SOURCE_OPTIONS: { value: BlogSource | 'all'; label: string }[] = [
+  { value: 'all', label: '全部来源' },
+  { value: 'direct', label: '直接创作' },
+  { value: 'plan', label: '从计划生成' },
+  { value: 'upload', label: '上传' },
+];
+
 export default function BlogListFilters({
   query,
   onQueryChange,
-  frameworkId,
-  onFrameworkChange,
+  templateId,
+  onTemplateChange,
   selectedTagIds,
   onTagToggle,
   statusFilter,
   onStatusChange,
   onClearFilters,
   hasFilters,
-  frameworks,
+  source,
+  onSourceChange,
+  wordCountRange,
+  onWordCountRangeChange,
+  dateRange,
+  onDateRangeChange,
+  templates,
   tags,
 }: Props): JSX.Element {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const hasAdvancedFilters = source !== 'all' || wordCountRange !== null || dateRange !== null;
   return (
     <div className="space-y-3 animate-fadeUp animate-delay-25">
       {/* 第一行：搜索 + 框架下拉 + 清除筛选 */}
@@ -88,23 +111,41 @@ export default function BlogListFilters({
           )}
         </div>
 
-        {/* 框架下拉（不依赖 Dexie 数据，避免空数据卡住筛选条） */}
+        {/* 模板下拉（v1.4-Unify：替代框架下拉，兼容旧数据） */}
         <select
-          value={frameworkId ?? 'all'}
+          value={templateId ?? 'all'}
           onChange={(e) => {
             const v = e.target.value;
-            onFrameworkChange(v === 'all' ? null : v);
+            onTemplateChange(v === 'all' ? null : v);
           }}
-          aria-label="按框架筛选"
+          aria-label="按模板筛选"
           className="h-9 px-3 bg-white border border-stone-200 rounded-xl text-sm font-medium text-brand-700 focus:outline-none focus:border-brand-900"
         >
-          <option value="all">全部框架</option>
-          {(frameworks ?? []).map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name}
+          <option value="all">全部模板</option>
+          {(templates ?? []).map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
             </option>
           ))}
         </select>
+
+        {/* 高级筛选开关 */}
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className={cn(
+            'h-9 px-3 text-sm rounded-xl border transition flex items-center gap-1.5',
+            advancedOpen || hasAdvancedFilters
+              ? 'bg-brand-900 text-white border-brand-900'
+              : 'bg-white text-brand-500 border-stone-200 hover:bg-stone-50',
+          )}
+        >
+          <ChevronDown size={14} className={cn('transition', advancedOpen && 'rotate-180')} />
+          高级筛选
+          {hasAdvancedFilters && !advancedOpen && (
+            <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" />
+          )}
+        </button>
 
         {hasFilters && (
           <button
@@ -171,6 +212,84 @@ export default function BlogListFilters({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* 高级筛选面板（v1.4-Organize） */}
+      {advancedOpen && (
+        <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 space-y-3 animate-fadeUp">
+          {/* 来源 */}
+          <div>
+            <div className="text-xs font-medium text-brand-500 mb-1.5">来源</div>
+            <div className="flex flex-wrap gap-1.5">
+              {SOURCE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => onSourceChange(opt.value)}
+                  className={cn(
+                    'px-2.5 py-1 text-xs rounded-lg transition',
+                    source === opt.value
+                      ? 'bg-brand-600 text-white'
+                      : 'bg-white text-brand-700 border border-stone-200',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 字数范围 */}
+          <div>
+            <div className="text-xs font-medium text-brand-500 mb-1.5">字数范围</div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                placeholder="最少"
+                value={wordCountRange?.min ?? ''}
+                onChange={(e) => {
+                  const min = Number(e.target.value) || 0;
+                  onWordCountRangeChange(min > 0 || (wordCountRange?.max ?? 0) > 0 ? { min, max: wordCountRange?.max ?? 0 } : null);
+                }}
+                className="w-24 px-2 py-1 text-xs bg-white border border-stone-200 rounded-lg"
+              />
+              <span className="text-xs text-brand-500">~</span>
+              <input
+                type="number"
+                min={0}
+                placeholder="最多"
+                value={wordCountRange?.max ?? ''}
+                onChange={(e) => {
+                  const max = Number(e.target.value) || 0;
+                  onWordCountRangeChange((wordCountRange?.min ?? 0) > 0 || max > 0 ? { min: wordCountRange?.min ?? 0, max } : null);
+                }}
+                className="w-24 px-2 py-1 text-xs bg-white border border-stone-200 rounded-lg"
+              />
+              <span className="text-xs text-brand-400">字</span>
+            </div>
+          </div>
+
+          {/* 日期范围 */}
+          <div>
+            <div className="text-xs font-medium text-brand-500 mb-1.5">创建日期</div>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={dateRange?.start ?? ''}
+                onChange={(e) => onDateRangeChange({ start: e.target.value, end: dateRange?.end ?? '' })}
+                className="px-2 py-1 text-xs bg-white border border-stone-200 rounded-lg"
+              />
+              <span className="text-xs text-brand-500">~</span>
+              <input
+                type="date"
+                value={dateRange?.end ?? ''}
+                onChange={(e) => onDateRangeChange({ start: dateRange?.start ?? '', end: e.target.value })}
+                className="px-2 py-1 text-xs bg-white border border-stone-200 rounded-lg"
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

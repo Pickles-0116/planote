@@ -24,6 +24,7 @@ import {
   AlertCircle,
   ArrowLeft,
   Calendar,
+  Copy,
   FileText,
   Hash,
   Trash2,
@@ -40,7 +41,9 @@ import {
   useBlogStore,
   usePlan,
   useToastStore,
+  useUndoStore,
 } from '@/stores';
+import { captureBlogSnapshot } from '@/stores/undoStore';
 import type { Attachment, TiptapJSON } from '@/types/domain';
 import { countText } from '@/features/blog/utils/countText';
 import { formatChineseDate } from '@/lib/utils';
@@ -75,7 +78,9 @@ export default function BlogDetail(): JSX.Element {
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const revokeAll = useAttachmentStore((s) => s.revokeAll);
   const deleteBlog = useBlogStore((s) => s.deleteBlog);
+  const duplicateBlog = useBlogStore((s) => s.duplicateBlog);
   const pushToast = useToastStore((s) => s.push);
+  const undoPush = useUndoStore((s) => s.push);
 
   // 卸载时释放 blob URL
   useEffect(() => {
@@ -91,20 +96,41 @@ export default function BlogDetail(): JSX.Element {
     [],
   );
 
-  // 删除流程
+  // 删除流程（带 undo 支持）
   const handleDelete = useCallback(async () => {
     if (!id || !blog) return;
     const ok = window.confirm(
-      `确认删除博客「${blog.title}」？\n附件将保留在 IndexedDB 中（孤儿数据）。`,
+      `确认删除博客「${blog.title}」？\n可按 Cmd+Z 撤销。`,
     );
     if (!ok) return;
     try {
+      const beforeBlog = await captureBlogSnapshot(id);
       await deleteBlog(id);
+      undoPush({
+        description: `删除博客「${blog.title}」`,
+        plans: { before: [], after: [] },
+        items: { before: [], after: [] },
+        blogs: { before: [beforeBlog], after: [{ id, data: null }] },
+        affectedPlanIds: [],
+      });
+      pushToast('success', `已删除「${blog.title}」（Cmd+Z 可撤销）`);
       navigate('/blogs');
     } catch {
       pushToast('error', '删除失败');
     }
-  }, [id, blog, deleteBlog, navigate, pushToast]);
+  }, [id, blog, deleteBlog, navigate, pushToast, undoPush]);
+
+  // 复制流程
+  const handleDuplicate = useCallback(async () => {
+    if (!id || !blog) return;
+    try {
+      const dup = await duplicateBlog(id);
+      pushToast('success', `已创建「${blog.title}」的副本`);
+      navigate(`/blogs/${dup.id}/edit`);
+    } catch {
+      pushToast('error', '复制失败');
+    }
+  }, [id, blog, duplicateBlog, navigate, pushToast]);
 
   // 加载中
   if (blog === undefined) {
@@ -161,6 +187,15 @@ export default function BlogDetail(): JSX.Element {
         >
           编辑
         </Link>
+        <button
+          type="button"
+          onClick={handleDuplicate}
+          aria-label="复制博客"
+          className="px-3 py-1.5 text-sm font-medium text-brand-700 dark:text-stone-200 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-600 rounded-xl hover:bg-stone-50 dark:hover:bg-stone-700 transition flex items-center gap-1"
+        >
+          <Copy size={12} />
+          复制
+        </button>
         <button
           type="button"
           onClick={handleDelete}

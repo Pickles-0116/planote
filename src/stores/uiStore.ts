@@ -32,13 +32,13 @@ export type ViewMode = 'grouped' | 'flat' | 'table';
  * 本 change 设计的语义清晰（add-plan-list-view/design.md §1 选型表）。
  * 两字段并行存在，职责分离。
  */
-export type PlanListView = 'group' | 'all' | 'table';
+export type PlanListView = 'group' | 'all' | 'table' | 'tree';
 
 /** 计划列表页专用排序键（add-smart-sort 增量；默认 'smart'）。 */
 export type PlanListSort = SortKey;
 
 /** 博客列表页专用视图模式（add-blog-list-and-detail 增量；默认 'grid'）。 */
-export type BlogListView = 'grid' | 'list';
+export type BlogListView = 'grid' | 'list' | 'byPlan';
 
 /** 博客列表页专用排序键（add-blog-list-and-detail 增量；默认 'created-desc'）。 */
 export type BlogListSort = BlogSortKey;

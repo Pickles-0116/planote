@@ -8,6 +8,13 @@
  * - 校验：≥ 1 个非空 title 才能保存
  * - 排序：v1.0 用上下移按钮（拖拽留 add-item-drag-sort）
  *
+ * v1.1 修（spec Scenario: 打开已有计划的编辑页）：
+ * - draft 携带 `existingId`（来自 useItemsForPlan）
+ * - 行左侧显示状态徽章：
+ *   - 「已存在」= 既有项（existingId 存在）
+ *   - 「新增」= 本次编辑新增项（无 existingId）
+ * - 标题清空 + 已存在项 → 在 usePlanEditSubmit 内被识别为「将删除」
+ *
  * 视觉（与 prototype plan-edit.html 事项行对齐）：
  * - 行高 p-3，stone-50 背景，hover 变白
  * - 删除按钮 hover 显红
@@ -61,10 +68,13 @@ export default function Step3Items({
         ) : (
           items.map((item, idx) => (
             <ItemRow
-              key={item.id ?? `draft-${idx}`}
+              key={item.existingId ?? item.id ?? `draft-${idx}`}
               item={item}
               isFirst={idx === 0}
               isLast={idx === items.length - 1}
+              isMarkedDelete={
+                Boolean(item.existingId) && item.title.trim().length === 0
+              }
               onUpdate={(patch) => onUpdate(idx, patch)}
               onRemove={() => onRemove(idx)}
               onMoveUp={() => onMove(idx, -1)}
@@ -101,6 +111,7 @@ function ItemRow({
   item,
   isFirst,
   isLast,
+  isMarkedDelete,
   onUpdate,
   onRemove,
   onMoveUp,
@@ -109,14 +120,19 @@ function ItemRow({
   item: DraftItem;
   isFirst: boolean;
   isLast: boolean;
+  isMarkedDelete: boolean;
   onUpdate: (patch: Partial<DraftItem>) => void;
   onRemove: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
+  const isExisting = Boolean(item.existingId);
   return (
     <div
-      className="group flex items-center gap-2 p-3 bg-stone-50 rounded-xl hover:bg-white transition"
+      className={cn(
+        'group flex items-center gap-2 p-3 bg-stone-50 rounded-xl hover:bg-white transition',
+        isMarkedDelete && 'opacity-60',
+      )}
     >
       {/* 拖拽 handle（v1.0 disabled，留 add-item-drag-sort 接管） */}
       <GripVertical
@@ -124,6 +140,30 @@ function ItemRow({
         size={14}
         aria-label="拖拽排序（v1.1 启用）"
       />
+
+      {/* 状态徽章：已存在 / 新增 / 将删除 */}
+      {isMarkedDelete ? (
+        <span
+          className="text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 text-red-700 bg-red-50 border border-red-200"
+          data-badge="will-delete"
+        >
+          将删除
+        </span>
+      ) : isExisting ? (
+        <span
+          className="text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 text-stone-500 bg-stone-100 border border-stone-200"
+          data-badge="existing"
+        >
+          已存在
+        </span>
+      ) : (
+        <span
+          className="text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 text-emerald-700 bg-emerald-50 border border-emerald-200"
+          data-badge="new"
+        >
+          新增
+        </span>
+      )}
 
       {/* 标题 */}
       <input

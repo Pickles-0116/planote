@@ -1,34 +1,30 @@
 /**
- * FrameworkGenerationDrawer - 计划侧「从计划生成博客」框架抽屉
+ * FrameworkGenerationDrawer - 计划侧「从计划生成博客」模板选择抽屉
  *
- * 历史：原 features/framework/components/FrameworkDrawer.tsx
- * 改名原因：add-framework-drawer 增量把同路径让给 BlogEdit 侧新抽屉，
- *          PlanDetail 侧按 design.md §2.1 命名约定改为 FrameworkGenerationDrawer。
- * 视觉（与 prototype plan-detail.html framework-drawer 对齐）：
- * - 标题「选择博客框架」+ 副标题「选一个框架，让写作有结构」
- * - 分类 Tab：全部 / 项目复盘 / 21天复盘 / 读书笔记 / 月度总结
- * - 4 张框架卡片（icon + 名称 + 描述 + 章节预览）
- * - 底部 CTA「应用《框架名》」
+ * v1.4-Unify 重写：原 useFrameworks(Dexie frameworks 表) → useAllTemplates(blogTemplates 表)。
+ * 导航参数从 frameworkId → templateId，与 BlogEdit create 模式对齐。
  *
- * 行为（spec Requirement: 框架抽屉入口）：
- * - 选框架 → console.log + onClose
- * - v1.0 不实现真实博客创建（add-blog-generation-flow 接手）
+ * 行为：选模板 → 跳转 /blogs/new?templateId=xxx&sourcePlanId=yyy
  */
 
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  GitPullRequest,
-  CalendarDays,
-  BookOpen,
-  BarChart3,
   Check,
   Sparkles,
+  FileText,
+  BookOpen,
+  BarChart3,
+  CalendarDays,
+  Lightbulb,
+  Search,
+  Settings,
   type LucideIcon,
 } from 'lucide-react';
 import Drawer from '@/components/shell/Drawer';
-import { useFrameworks } from '@/stores';
+import { useAllTemplates } from '@/stores';
 import { cn } from '@/lib/utils';
-import type { ID, Framework, FrameworkCategory } from '@/types/domain';
+import type { ID, BlogTemplate, TemplateCategory } from '@/types/domain';
 
 interface Props {
   sourcePlanId?: ID;
@@ -37,18 +33,25 @@ interface Props {
 }
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  GitPullRequest,
+  GitPullRequest: FileText,
   CalendarDays,
   BookOpen,
   BarChart3,
+  FileText,
+  Lightbulb,
+  Search,
+  Settings,
 };
 
-const CATEGORY_LABEL: Record<FrameworkCategory | 'all', string> = {
+const CATEGORY_LABEL: Record<TemplateCategory | 'all', string> = {
   all: '全部',
   review: '项目复盘',
   habit: '21天复盘',
   note: '读书笔记',
   summary: '月度总结',
+  decision: '决策日志',
+  analysis: '问题分析',
+  custom: '自定义',
 };
 
 export default function FrameworkGenerationDrawer({
@@ -56,29 +59,40 @@ export default function FrameworkGenerationDrawer({
   open,
   onClose,
 }: Props) {
-  const allFrameworks = useFrameworks();
-  const [category, setCategory] = useState<FrameworkCategory | 'all'>('all');
+  const allTemplates = useAllTemplates();
+  const navigate = useNavigate();
+  const [category, setCategory] = useState<TemplateCategory | 'all'>('all');
   const [selectedId, setSelectedId] = useState<ID | null>(null);
 
   const visible = useMemo(() => {
-    if (!allFrameworks) return [];
-    if (category === 'all') return allFrameworks;
-    return allFrameworks.filter((f) => f.category === category);
-  }, [allFrameworks, category]);
+    if (!allTemplates) return [];
+    if (category === 'all') return allTemplates;
+    return allTemplates.filter((t) => t.category === category);
+  }, [allTemplates, category]);
 
   const selected = useMemo(
-    () => visible.find((f) => f.id === selectedId) ?? null,
+    () => visible.find((t) => t.id === selectedId) ?? null,
     [visible, selectedId],
   );
 
-  const handleApply = (fw: Framework) => {
-    // v1.0 简化：选框架 → console.log + 关闭抽屉
-    // eslint-disable-next-line no-console
-    console.log(
-      `[v1.1] generate blog from plan ${sourcePlanId ?? '(none)'} with framework ${fw.id} (${fw.name})`,
+  // 动态计算实际出现的分类（用于 Tab 栏，只显示有数据的分类）
+  const activeCategories = useMemo(() => {
+    if (!allTemplates) return [] as TemplateCategory[];
+    const cats = new Set(allTemplates.map((t) => t.category));
+    return (Object.keys(CATEGORY_LABEL) as Array<TemplateCategory | 'all'>).filter(
+      (c): c is TemplateCategory => c !== 'all' && cats.has(c),
     );
+  }, [allTemplates]);
+
+  const handleApply = (tpl: BlogTemplate) => {
+    const params = new URLSearchParams();
+    params.set('templateId', tpl.id);
+    if (sourcePlanId) {
+      params.set('sourcePlanId', sourcePlanId);
+    }
     onClose();
     setSelectedId(null);
+    navigate(`/blogs/new?${params.toString()}`);
   };
 
   return (
@@ -88,12 +102,25 @@ export default function FrameworkGenerationDrawer({
         onClose();
         setSelectedId(null);
       }}
-      title="选择博客框架"
-      description="选一个框架，让写作有结构"
+      title="选择博客模板"
+      description="选一个模板，让写作有结构"
     >
       {/* 分类 Tab */}
       <div className="px-5 py-3 border-b border-stone-100 flex items-center gap-2 overflow-x-auto scrollbar-thin flex-shrink-0">
-        {(Object.keys(CATEGORY_LABEL) as Array<FrameworkCategory | 'all'>).map((c) => (
+        <button
+          key="all"
+          type="button"
+          onClick={() => setCategory('all')}
+          className={cn(
+            'px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition',
+            category === 'all'
+              ? 'bg-brand-900 text-white'
+              : 'text-brand-500 hover:bg-stone-100',
+          )}
+        >
+          全部
+        </button>
+        {activeCategories.map((c) => (
           <button
             key={c}
             type="button"
@@ -105,26 +132,26 @@ export default function FrameworkGenerationDrawer({
                 : 'text-brand-500 hover:bg-stone-100',
             )}
           >
-            {CATEGORY_LABEL[c]}
+            {CATEGORY_LABEL[c] ?? c}
           </button>
         ))}
       </div>
 
-      {/* 框架卡片列表 */}
-      <div className="p-5 space-y-3">
-        {allFrameworks === undefined ? (
-          <div className="text-center text-sm text-brand-400 py-8">加载框架中…</div>
+      {/* 模板卡片列表 */}
+      <div className="p-5 space-y-3 overflow-y-auto flex-1">
+        {allTemplates === undefined ? (
+          <div className="text-center text-sm text-brand-400 py-8">加载模板中…</div>
         ) : visible.length === 0 ? (
-          <div className="text-center text-sm text-brand-400 py-8">该分类下没有框架</div>
+          <div className="text-center text-sm text-brand-400 py-8">该分类下没有模板</div>
         ) : (
-          visible.map((fw) => {
-            const Icon = ICON_MAP[fw.icon] ?? Sparkles;
-            const isSelected = selectedId === fw.id;
+          visible.map((tpl) => {
+            const Icon = ICON_MAP[tpl.icon] ?? Sparkles;
+            const isSelected = selectedId === tpl.id;
             return (
               <button
-                key={fw.id}
+                key={tpl.id}
                 type="button"
-                onClick={() => setSelectedId(fw.id)}
+                onClick={() => setSelectedId(tpl.id)}
                 className={cn(
                   'w-full text-left rounded-xl p-4 transition',
                   isSelected
@@ -142,13 +169,13 @@ export default function FrameworkGenerationDrawer({
                     >
                       <Icon size={14} />
                     </div>
-                    <span className="text-sm font-semibold">{fw.name}</span>
+                    <span className="text-sm font-semibold">{tpl.name}</span>
                   </div>
                   {isSelected && <Check className="text-accent-500" size={16} />}
                 </div>
-                <div className="text-xs text-brand-400 mb-3">{fw.description}</div>
+                <div className="text-xs text-brand-400 mb-3">{tpl.description}</div>
                 <div className="space-y-1 text-xs text-brand-600">
-                  {fw.sections.slice(0, 5).map((s) => (
+                  {tpl.sections.slice(0, 5).map((s) => (
                     <div key={s.heading} className="flex items-center gap-1.5">
                       <span className="w-1 h-1 rounded-full bg-stone-300 flex-shrink-0" />
                       <span className="line-clamp-2">{s.heading}</span>
@@ -174,7 +201,7 @@ export default function FrameworkGenerationDrawer({
               : 'bg-stone-100 text-brand-400 cursor-not-allowed',
           )}
         >
-          {selected ? `应用「${selected.name}」` : '请选择一个框架'}
+          {selected ? `应用「${selected.name}」` : '请选择一个模板'}
         </button>
       </div>
     </Drawer>

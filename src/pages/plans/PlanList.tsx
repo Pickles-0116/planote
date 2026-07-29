@@ -18,9 +18,9 @@
  *   - 批量操作（add-plan-batch-ops 接手）
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Notebook, SearchX } from 'lucide-react';
+import { Plus, Notebook, SearchX, Filter } from 'lucide-react';
 import EmptyState from '@/components/shell/EmptyState';
 import PlanSearchBox from '@/components/plans/PlanSearchBox';
 import PlanSortDropdown from '@/components/plans/PlanSortDropdown';
@@ -32,6 +32,9 @@ import { useUIStore } from '@/stores/uiStore';
 import PlanGroupedView from '@/features/plan/components/PlanGroupedView';
 import PlanListAllView from '@/features/plan/components/PlanListAllView';
 import PlanTableView from '@/features/plan/components/PlanTableView';
+import PlanTreeView from '@/features/plan/components/PlanTreeView';
+import PlanFilterPanel, { type PlanFilterState, DEFAULT_PLAN_FILTERS } from '@/features/plan/components/PlanFilterPanel';
+import type { Plan } from '@/types/domain';
 import PlanListSkeleton from './PlanListSkeleton';
 import SortHint from './SortHint';
 import { DEFAULT_SORT_KEY } from '@/shared/sort';
@@ -45,13 +48,17 @@ export default function PlanList() {
   const setSort = useUIStore((s) => s.setPlanListSort);
 
   const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<PlanFilterState>(DEFAULT_PLAN_FILTERS);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   // 1) 原始数据（实时订阅）
   const rawPlans = usePlans();
   // 2) 智能排序（add-smart-sort 增量：传入 planListSort 切换）
   const sortedPlans = useSortedPlans(rawPlans, sort);
-  // 3) 搜索过滤
-  const filteredPlans = usePlanSearch(sortedPlans, query);
+  // 3) 多维筛选
+  const filteredByPanel = useMemo(() => applyPlanFilters(sortedPlans ?? [], filters), [sortedPlans, filters]);
+  // 4) 搜索过滤
+  const filteredPlans = usePlanSearch(filteredByPanel, query);
 
   // 加载态：liveQuery 首帧 undefined
   if (rawPlans === undefined || sortedPlans === undefined || filteredPlans === undefined) {
@@ -86,6 +93,9 @@ export default function PlanList() {
           onViewChange={setView}
           sort={sort}
           onSortChange={setSort}
+          filterOpen={filterOpen}
+          onToggleFilter={() => setFilterOpen(v => !v)}
+          hasActiveFilters={filters.statuses.length > 0 || filters.timeDims.length > 0 || filters.dateRange !== null}
         />
         <EmptyState
           icon={SearchX}
@@ -93,7 +103,7 @@ export default function PlanList() {
           description={`没有 plan 包含「${query}」`}
           action={{
             label: '清除筛选',
-            onClick: () => setQuery(''),
+            onClick: () => { setQuery(''); setFilters(DEFAULT_PLAN_FILTERS); },
             variant: 'secondary',
           }}
           variant="compact"
@@ -112,11 +122,22 @@ export default function PlanList() {
         onViewChange={setView}
         sort={sort}
         onSortChange={setSort}
+        filterOpen={filterOpen}
+        onToggleFilter={() => setFilterOpen(v => !v)}
+        hasActiveFilters={filters.statuses.length > 0 || filters.timeDims.length > 0 || filters.dateRange !== null}
       />
+      {filterOpen && (
+        <PlanFilterPanel
+          filters={filters}
+          onChange={setFilters}
+          matchCount={filteredPlans?.length ?? 0}
+        />
+      )}
       {view === 'group' && sort === DEFAULT_SORT_KEY && <SortHint />}
       {view === 'group' && <PlanGroupedView plans={filteredPlans} />}
       {view === 'all' && <PlanListAllView plans={filteredPlans} />}
       {view === 'table' && <PlanTableView plans={filteredPlans} />}
+      {view === 'tree' && <PlanTreeView plans={filteredPlans} />}
     </div>
   );
 }
@@ -155,13 +176,19 @@ function Toolbar({
   onViewChange,
   sort,
   onSortChange,
+  filterOpen,
+  onToggleFilter,
+  hasActiveFilters,
 }: {
   query: string;
   onQueryChange: (q: string) => void;
-  view: 'group' | 'all' | 'table';
-  onViewChange: (v: 'group' | 'all' | 'table') => void;
+  view: 'group' | 'all' | 'table' | 'tree';
+  onViewChange: (v: 'group' | 'all' | 'table' | 'tree') => void;
   sort: SortKey;
   onSortChange: (s: SortKey) => void;
+  filterOpen: boolean;
+  onToggleFilter: () => void;
+  hasActiveFilters: boolean;
 }) {
   return (
     <div
@@ -170,7 +197,46 @@ function Toolbar({
     >
       <PlanSearchBox value={query} onChange={onQueryChange} />
       <PlanSortDropdown value={sort} onChange={onSortChange} />
+      <button
+        type="button"
+        onClick={onToggleFilter}
+        className={`relative p-2 rounded-xl border transition ${
+          filterOpen || hasActiveFilters
+            ? 'bg-brand-900 text-white border-brand-900'
+            : 'bg-white dark:bg-stone-800 text-brand-500 border-stone-200 dark:border-stone-600 hover:bg-stone-50 dark:hover:bg-stone-700'
+        }`}
+        title="筛选"
+      >
+        <Filter size={16} />
+        {hasActiveFilters && !filterOpen && (
+          <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-500 rounded-full" />
+        )}
+      </button>
       <PlanViewSwitcher value={view} onChange={onViewChange} />
     </div>
   );
+}
+
+/** v1.4：多维筛选应用函数。 */
+function applyPlanFilters(plans: Plan[], filters: PlanFilterState): Plan[] {
+  let result = plans;
+  if (filters.statuses.length > 0) {
+    result = result.filter(p => filters.statuses.includes(p.status));
+  }
+  if (filters.timeDims.length > 0) {
+    result = result.filter(p => filters.timeDims.includes(p.timeDim));
+  }
+  if (filters.selectedTagIds.length > 0) {
+    result = result.filter(p => p.tagIds.some(id => filters.selectedTagIds.includes(id)));
+  }
+  if (filters.dateRange) {
+    const { start, end } = filters.dateRange;
+    if (start) {
+      result = result.filter(p => (p.startDate ?? '') >= start);
+    }
+    if (end) {
+      result = result.filter(p => (p.startDate ?? '') <= end);
+    }
+  }
+  return result;
 }

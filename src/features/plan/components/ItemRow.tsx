@@ -4,16 +4,28 @@
  * 视觉（与 prototype plan-detail.html 事项行 + ux-guidelines §2 Flow A Step 3 对齐）：
  * - 左：自定义 checkbox 18px 圆角 emerald
  * - 中：标题（line-clamp 1）+ 截止日期小字
- * - 右：hover 时显示「标记进行中/待办」切换按钮（spec Requirement: 事项状态切换）
+ * - 右：始终显示「删除」按钮（v1.1 修：不再 hover-only）
+ * - hover 时显示「标记进行中/待办」切换按钮（spec Requirement: 事项状态切换）
  * - doing 状态：左侧 2px 蓝边 + 「进行中」badge
  * - done 状态：标题 line-through + 灰色
  * - a11y：aria-label + role="listitem"
  *
+ * v1.1 编辑（spec Scenario: 编辑事项标题）：
+ * - 双击标题 → 进入 inline 编辑
+ * - 失焦或回车 → 调 onUpdate
+ * - 失焦时 title 为空 → 调 onRemove 删除该事项
+ *
  * 状态视觉由 props 传入的 item.status 决定，**不**自己算——上层 useItemsForPlan 推送最新数据。
  */
 
-import { useState } from 'react';
-import { Check, Play, RotateCcw, CalendarDays } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import {
+  Check,
+  Play,
+  RotateCcw,
+  CalendarDays,
+  Trash2,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ID, Item, ItemStatus } from '@/types/domain';
 import { formatRelativeTime } from '@/shared/utils/format';
@@ -22,6 +34,8 @@ interface Props {
   item: Item;
   onToggle: (id: ID) => void;
   onSetStatus: (id: ID, status: ItemStatus) => void;
+  onUpdate: (id: ID, patch: Partial<Item>) => Promise<void> | void;
+  onRemove: (id: ID) => Promise<void> | void;
 }
 
 const STATUS_BADGE: Record<
@@ -45,11 +59,66 @@ const STATUS_BADGE: Record<
   },
 };
 
-export default function ItemRow({ item, onToggle, onSetStatus }: Props) {
+export default function ItemRow({
+  item,
+  onToggle,
+  onSetStatus,
+  onUpdate,
+  onRemove,
+}: Props) {
   const [hover, setHover] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(item.title);
+  const editInputRef = useRef<HTMLInputElement>(null);
   const isDone = item.status === 'done';
   const isDoing = item.status === 'doing';
   const badge = STATUS_BADGE[item.status];
+
+  // 进入编辑态时聚焦
+  useEffect(() => {
+    if (editing) {
+      editInputRef.current?.focus();
+      editInputRef.current?.select();
+    }
+  }, [editing]);
+
+  // 外部 item.title 变化时同步 draft（不影响本地正在编辑的内容）
+  useEffect(() => {
+    if (!editing) {
+      setDraftTitle(item.title);
+    }
+  }, [item.title, editing]);
+
+  const commitEdit = async (): Promise<void> => {
+    const next = draftTitle.trim();
+    if (next === item.title) {
+      setEditing(false);
+      return;
+    }
+    if (next === '') {
+      // 空标题 → 删除该事项
+      try {
+        await onRemove(item.id);
+      } catch (e) {
+        console.error('[ItemRow] remove failed:', e);
+      }
+      return;
+    }
+    try {
+      await onUpdate(item.id, { title: next });
+      setEditing(false);
+    } catch (e) {
+      console.error('[ItemRow] update failed:', e);
+    }
+  };
+
+  const handleRemoveClick = async (): Promise<void> => {
+    try {
+      await onRemove(item.id);
+    } catch (e) {
+      console.error('[ItemRow] remove failed:', e);
+    }
+  };
 
   return (
     <div
@@ -94,14 +163,45 @@ export default function ItemRow({ item, onToggle, onSetStatus }: Props) {
 
       {/* 标题 + meta */}
       <div className="flex-1 min-w-0">
-        <div
-          className={cn(
-            'text-sm',
-            isDone ? 'line-through text-brand-400' : 'text-brand-900',
-          )}
-        >
-          {item.title}
-        </div>
+        {editing ? (
+          <input
+            ref={editInputRef}
+            type="text"
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void commitEdit();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setDraftTitle(item.title);
+                setEditing(false);
+              }
+            }}
+            onBlur={() => {
+              void commitEdit();
+            }}
+            className={cn(
+              'w-full text-sm bg-white border border-brand-300 rounded px-1.5 py-0.5 focus:outline-none',
+              isDone ? 'line-through text-brand-400' : 'text-brand-900',
+            )}
+            data-edit-title-input
+          />
+        ) : (
+          <div
+            className={cn(
+              'text-sm cursor-text select-none',
+              isDone ? 'line-through text-brand-400' : 'text-brand-900',
+            )}
+            onDoubleClick={() => {
+              if (!isDone) setEditing(true);
+            }}
+            title={isDone ? '已完成事项不可编辑' : '双击编辑'}
+          >
+            {item.title}
+          </div>
+        )}
         <div className="flex items-center gap-2 mt-0.5 text-[10px] text-brand-400">
           {item.dueDate && (
             <span className="flex items-center gap-0.5">
@@ -166,6 +266,19 @@ export default function ItemRow({ item, onToggle, onSetStatus }: Props) {
           撤销
         </button>
       )}
+
+      {/* v1.1 修：删除按钮始终显示（不再 hover-only） */}
+      <button
+        type="button"
+        onClick={() => {
+          void handleRemoveClick();
+        }}
+        className="flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-brand-400 hover:text-red-500 hover:bg-red-50 transition"
+        aria-label="删除事项"
+        data-remove-item-btn
+      >
+        <Trash2 size={12} />
+      </button>
     </div>
   );
 }

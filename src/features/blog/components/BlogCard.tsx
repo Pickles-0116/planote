@@ -13,10 +13,13 @@
  * a11y：<article> + <h3> + role="link" + tabIndex
  */
 
-import { Link } from 'react-router-dom';
-import { Calendar, FileText, Hash } from 'lucide-react';
+import { useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Calendar, Copy, FileText, Hash } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { Blog, BlogStatus, Framework } from '@/types/domain';
+import AddToCollectionButton from '@/components/shared/AddToCollectionButton';
+import { useBlogStore, useToastStore } from '@/stores';
+import type { Blog, BlogStatus, BlogTemplate, Framework } from '@/types/domain';
 import { formatRelativeTime } from '../utils/formatRelativeTime';
 
 export type BlogCardDensity = 'grid' | 'list';
@@ -24,8 +27,8 @@ export type BlogCardDensity = 'grid' | 'list';
 interface Props {
   blog: Blog;
   density?: BlogCardDensity;
-  /** 框架名映射（避免每次 find） */
-  framework?: Framework | undefined;
+  /** 模板 / 框架名映射（避免每次 find） */
+  framework?: BlogTemplate | Framework | undefined;
 }
 
 const STATUS_LABEL: Record<BlogStatus, string> = {
@@ -54,7 +57,25 @@ function StatusBadge({ status }: { status: BlogStatus }): JSX.Element {
 }
 
 export default function BlogCard({ blog, density = 'grid', framework }: Props) {
+  const navigate = useNavigate();
+  const duplicateBlog = useBlogStore((s) => s.duplicateBlog);
+  const pushToast = useToastStore((s) => s.push);
   const relTime = formatRelativeTime(blog.updatedAt);
+
+  const handleDuplicate = useCallback(
+    async (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        const dup = await duplicateBlog(blog.id);
+        pushToast('success', `已创建副本`);
+        navigate(`/blogs/${dup.id}/edit`);
+      } catch {
+        pushToast('error', '复制失败');
+      }
+    },
+    [blog.id, duplicateBlog, pushToast, navigate],
+  );
 
   // list 密度：单行紧凑横排
   if (density === 'list') {
@@ -131,19 +152,32 @@ export default function BlogCard({ blog, density = 'grid', framework }: Props) {
           </div>
         )}
 
-        {/* 框架名 + 相对时间 */}
+        {/* 框架名 + 复制按钮 + 相对时间 */}
         <div className="flex items-center justify-between text-[10px] text-brand-400 pt-1 border-t border-stone-100">
           {framework ? (
-            <span className="font-medium text-brand-600 truncate max-w-[60%]">
+            <span className="font-medium text-brand-600 truncate max-w-[40%]">
               {framework.name}
             </span>
           ) : (
             <span className="text-brand-300">未选框架</span>
           )}
-          <span className="flex items-center gap-1 flex-shrink-0">
-            <Calendar size={10} />
-            {relTime}
-          </span>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span onClick={(e) => e.preventDefault()}>
+              <AddToCollectionButton entityType="blog" entityId={blog.id} />
+            </span>
+            <button
+              type="button"
+              onClick={handleDuplicate}
+              title="复制博客"
+              className="text-brand-400 hover:text-brand-700 transition p-0.5 rounded hover:bg-stone-100"
+            >
+              <Copy size={11} />
+            </button>
+            <span className="flex items-center gap-1">
+              <Calendar size={10} />
+              {relTime}
+            </span>
+          </div>
         </div>
       </article>
     </Link>

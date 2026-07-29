@@ -4,22 +4,28 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { db } from '@/db';
 import { seedIfNeeded } from '@/db/seed';
+import { migrateAllToTemplates } from '@/features/templates/hooks/migratePresets';
 import { ErrorBoundary } from '@/components/shell/ErrorBoundary';
 import './styles/globals.css';
 
 /**
- * 种子数据接入点（fire-and-forget）
+ * 种子数据 + v1.4 统一迁移（fire-and-forget）
  *
- * 选择 main.tsx 顶层而非 App.tsx useEffect：
- * - 早启动：IndexedDB 写入与 React 渲染并行，不互相阻塞
- * - 错误隔离：seed 失败不影响首屏渲染（用户看到空框架抽屉，但能继续操作）
- * - 后续 add-zustand-stores change 接管此逻辑时，本处可整体替换
+ * 1. seedIfNeeded：首次启动写入 4 套 Dexie Framework（v1.0 逻辑，保留兼容）
+ * 2. migrateAllToTemplates：v1.4 一站式迁移
+ *    - 10 个 Preset → BlogTemplate
+ *    - 4 个 Dexie Framework → BlogTemplate
+ *    - Blog.frameworkId → Blog.templateId
+ *    - Blog.tagIds 字符串 → Tag ID
  *
- * 不 await：主流程不等待种子完成（idempotent，重复启动安全）。
+ * 不 await：主流程不等待迁移完成（idempotent，重复启动安全）。
  */
 seedIfNeeded(db).catch((err) => {
-  // 种子失败仅记录，不抛错阻塞 UI
   console.error('[seed] failed to seed built-in frameworks:', err);
+});
+
+migrateAllToTemplates().catch((err) => {
+  console.error('[migrate] v1.4 migration failed:', err);
 });
 
 /* ============================================================

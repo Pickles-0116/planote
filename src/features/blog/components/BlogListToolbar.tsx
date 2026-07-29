@@ -16,9 +16,9 @@
  * 视觉：与 PlanList 工具栏对齐（白底胶囊容器 / 阴影）。
  */
 
-import { LayoutGrid, List, Plus } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { LayoutGrid, List, CalendarDays } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import ImportMarkdownButton from './ImportMarkdownButton';
 import type { BlogListView, BlogListSort } from '@/stores';
 import {
   BLOG_SORT_OPTIONS,
@@ -37,6 +37,7 @@ interface Props {
 const VIEW_OPTIONS: { value: BlogListView; label: string; icon: typeof LayoutGrid }[] = [
   { value: 'grid', label: '卡片', icon: LayoutGrid },
   { value: 'list', label: '列表', icon: List },
+  { value: 'byPlan', label: '按计划', icon: CalendarDays },
 ];
 
 export default function BlogListToolbar({
@@ -45,7 +46,6 @@ export default function BlogListToolbar({
   sort,
   onSortChange,
 }: Props): JSX.Element {
-  const navigate = useNavigate();
   const current = findBlogSortOption(sort ?? DEFAULT_BLOG_SORT_KEY);
 
   return (
@@ -103,15 +103,10 @@ export default function BlogListToolbar({
       {/* 显当前选项（与排序下拉平行的静态 label，便于无 hover 时也可读） */}
       <span className="text-xs text-brand-400 hidden md:inline">· {current.label}</span>
 
-      {/* 「写新博客」按钮 */}
-      <button
-        type="button"
-        onClick={() => navigate('/blogs/new')}
-        className="ml-auto px-4 py-2 rounded-xl bg-brand-900 text-white text-sm font-medium hover:bg-brand-800 transition flex items-center gap-2 shadow-sm"
-      >
-        <Plus size={12} />
-        写新博客
-      </button>
+      {/* 批量导入 .md */}
+      <div className="ml-auto">
+        <ImportMarkdownButton label="批量导入 .md" />
+      </div>
     </div>
   );
 }

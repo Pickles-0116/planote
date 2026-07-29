@@ -81,8 +81,15 @@ export default function PlanEdit({ mode = 'create' }: PlanEditProps) {
       level: plan.level,
       timeDim: plan.timeDim,
       parentPlanId: plan.parentPlanId ?? null,
-      // edit 模式不携带 items（add-item-crud 接手）
-      items: [],
+      // v1.1 修：edit 模式从 useItemsForPlan 拉取现有 items，预填到 state.items
+      // 每个 draft 带 existingId 标记；Step3Items 用它显示「已存在」徽章。
+      items: items.map((it) => ({
+        existingId: it.id,
+        id: it.id,
+        title: it.title,
+        dueDate: it.dueDate,
+        status: it.status,
+      })),
       tags: [],
       // v1.0 高级选项 UI 占位
       autoGenBlog: true,

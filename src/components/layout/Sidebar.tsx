@@ -6,8 +6,11 @@ import {
   Kanban,
   Settings as SettingsIcon,
   PenLine,
+  FileText,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import CollectionSidebar from './CollectionSidebar';
 
 interface NavItem {
   to: string;
@@ -21,6 +24,8 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: '仪表盘', icon: <LayoutDashboard size={16} />, end: true },
   { to: '/plans', label: '计划', icon: <Target size={16} /> },
   { to: '/blogs', label: '博客', icon: <Newspaper size={16} /> },
+  { to: '/templates', label: '模板', icon: <FileText size={16} /> },
+  { to: '/ai-chat', label: 'AI 对话', icon: <Sparkles size={16} /> },
   { to: '/kanban', label: '看板', icon: <Kanban size={16} /> },
 ];
 
@@ -61,6 +66,11 @@ export default function Sidebar() {
             )}
           </NavLink>
         ))}
+
+        {/* v1.4：收藏夹区块 */}
+        <div className="pt-4 pb-1 border-t border-stone-100 dark:border-stone-700">
+          <CollectionSidebar />
+        </div>
 
         {/* 其他 */}
         <div className="pt-4 pb-2 px-3 text-[10px] font-semibold text-brand-400 dark:text-stone-500 tracking-wider uppercase">

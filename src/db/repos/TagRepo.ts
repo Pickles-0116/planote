@@ -11,6 +11,7 @@ import type { ID, Tag, ISODate } from '@/types/domain';
 import type {
   TagRepository,
   TagCreateInput,
+  TagUpdatePatch,
   AppErrorPayload,
 } from './types';
 import { AppError } from './types';
@@ -62,6 +63,24 @@ export class TagRepo implements TagRepository {
       throw e;
     }
     return tag;
+  }
+
+  async update(id: ID, patch: TagUpdatePatch): Promise<Tag> {
+    const tag = await this.db.tags.get(id);
+    if (!tag) throwNotFound(id);
+    const existing = tag!; // type narrowing after throwNotFound
+
+    // 名称唯一性校验（排除自身）
+    if (patch.name !== undefined && patch.name !== existing.name) {
+      const dup = await this.db.tags.where('name').equals(patch.name).first();
+      if (dup) {
+        throwConflict(`Tag name already exists: ${patch.name}`);
+      }
+    }
+
+    const merged = { ...existing, ...patch, id } as Tag;
+    await this.db.tags.put(merged);
+    return merged;
   }
 
   async delete(id: ID): Promise<void> {

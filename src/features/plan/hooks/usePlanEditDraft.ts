@@ -28,8 +28,16 @@ import type { ID, PlanLevel, PlanTimeDim, ISODate } from '@/types/domain';
 export interface DraftItem {
   /** 已存在的事项 ID（编辑模式从 plan 取）；新建时 undefined */
   id?: ID;
+  /**
+   * 与 `id` 同义但语义更显式：edit 模式从 `useItemsForPlan` 拉到的已有项。
+   * Step3Items 用它显示「已存在」徽章；usePlanEditSubmit 用它算 toUpdate / toDelete。
+   * 取名沿用 design.md / spec.md 里的 `existingId`。
+   */
+  existingId?: ID;
   title: string;
   dueDate?: ISODate;
+  /** edit 模式从已有项同步；create 模式不出现。用于 diff 判定。 */
+  status?: 'todo' | 'doing' | 'done';
 }
 
 export interface DraftFormState {

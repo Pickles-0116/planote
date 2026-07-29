@@ -15,6 +15,7 @@
 import { Link } from 'react-router-dom';
 import { Sparkles, CalendarDays } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import AddToCollectionButton from '@/components/shared/AddToCollectionButton';
 import type { Plan, PlanLevel, PlanStatus, UrgencyLevel } from '@/types/domain';
 
 export type PlanCardDensity = 'full' | 'compact' | 'table-row';
@@ -235,13 +236,18 @@ export default function PlanCard({ plan, density = 'full', selected = false }: P
                 🔥 {URGENCY_LABEL[urgency]}
               </span>
             )}
-            {/* 100% 完成徽章 */}
-            {isComplete && (
-              <span className="absolute top-3 right-4 text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded flex items-center gap-1">
-                <Sparkles size={8} />
-                可总结
+            {/* 右上角操作区：完成徽章 + 收藏按钮 */}
+            <span className="absolute top-3 right-4 flex items-center gap-1.5">
+              {isComplete && (
+                <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-200 px-2 py-0.5 rounded flex items-center gap-1">
+                  <Sparkles size={8} />
+                  可总结
+                </span>
+              )}
+              <span onClick={(e) => e.preventDefault()}>
+                <AddToCollectionButton entityType="plan" entityId={plan.id} />
               </span>
-            )}
+            </span>
             {/* 状态 badge */}
             <span
               className={cn(

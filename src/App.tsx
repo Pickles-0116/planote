@@ -32,6 +32,10 @@ const BlogDetail = lazy(() => import('@/pages/blogs/BlogDetail'));
 const BlogEdit = lazy(() => import('@/pages/blogs/BlogEdit'));
 const Kanban = lazy(() => import('@/pages/Kanban'));
 const Settings = lazy(() => import('@/pages/Settings'));
+const CollectionDetail = lazy(() => import('@/pages/CollectionDetail'));
+const TemplateList = lazy(() => import('@/features/templates/components/TemplateList'));
+const TemplateEditor = lazy(() => import('@/features/templates/components/TemplateEditor'));
+const AIChat = lazy(() => import('@/pages/ai-chat/AIChat'));
 
 /**
  * 路由级 Suspense 包装器
@@ -76,8 +80,28 @@ export default function App() {
         />
         <Route path="/kanban" element={withSuspense(<Kanban />, '加载看板…')} />
         <Route
+          path="/templates"
+          element={withSuspense(<TemplateList />, '加载模板列表…')}
+        />
+        <Route
+          path="/templates/new"
+          element={withSuspense(<TemplateEditor />, '加载模板编辑器…')}
+        />
+        <Route
+          path="/templates/:id/edit"
+          element={withSuspense(<TemplateEditor />, '加载模板编辑器…')}
+        />
+        <Route
           path="/settings"
           element={withSuspense(<Settings />, '加载设置…')}
+        />
+        <Route
+          path="/collections/:id"
+          element={withSuspense(<CollectionDetail />, '加载收藏夹…')}
+        />
+        <Route
+          path="/ai-chat"
+          element={withSuspense(<AIChat />, '加载 AI 对话…')}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

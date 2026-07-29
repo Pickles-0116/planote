@@ -49,6 +49,8 @@ interface Props {
   className?: string;
   /** add-blog-attachment 增量：附件按钮点击（父组件触发隐藏 file input）。 */
   onAttachClick?: () => void;
+  /** v1.3-AI：打开 AI 写作面板。 */
+  onAIWriting?: () => void;
 }
 
 export default function RichEditor({
@@ -64,6 +66,7 @@ export default function RichEditor({
   onEditorReady,
   className,
   onAttachClick,
+  onAIWriting,
 }: Props): JSX.Element {
   const initialContent = migrateBlogContent(value);
 
@@ -131,6 +134,7 @@ export default function RichEditor({
         onApplyFramework={() => onApplyFramework?.()}
         onSaveNow={onSaveNow}
         onAttachClick={onAttachClick}
+        onAIWriting={onAIWriting}
       />
       <EditorContent editor={editor} />
     </div>

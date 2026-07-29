@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import FrameworkGenerationDrawerHost from '@/features/framework/components/FrameworkGenerationDrawerHost';
+import AIChatBubbleHost from '@/features/ai-chat/components/AIChatBubbleHost';
 import ToastViewport from '@/shared/components/ToastViewport';
 import { useUIStore } from '@/stores/uiStore';
+import { useGlobalShortcuts } from '@/shared/hooks/useGlobalShortcuts';
 
 /**
  * 主布局：左侧 Sidebar + 右侧 Header + 主内容区 + 全局 Framework 抽屉宿主
@@ -24,6 +26,9 @@ import { useUIStore } from '@/stores/uiStore';
  */
 export default function AppLayout() {
   const closeAllDrawers = useUIStore((s) => s.closeAllDrawers);
+  const location = useLocation();
+  const isChatPage = location.pathname.startsWith('/ai-chat');
+  useGlobalShortcuts();
 
   // 路由变化时清空抽屉栈（防幽灵抽屉）
   useEffect(() => {
@@ -37,13 +42,22 @@ export default function AppLayout() {
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header />
-        <main className="flex-1 overflow-y-auto scrollbar-thin">
-          <div className="max-w-7xl mx-auto px-8 py-8 text-brand-900 dark:text-stone-100">
+        {isChatPage ? (
+          // AI 对话页：绕过 max-w-7xl 容器，整宽整高填满主区
+          <main className="flex-1 min-h-0">
             <Outlet />
-          </div>
-        </main>
+          </main>
+        ) : (
+          // 其他页：标准 max-w-7xl 居中布局
+          <main className="flex-1 overflow-y-auto scrollbar-thin">
+            <div className="max-w-7xl mx-auto px-8 py-8 text-brand-900 dark:text-stone-100">
+              <Outlet />
+            </div>
+          </main>
+        )}
       </div>
       <FrameworkGenerationDrawerHost />
+      <AIChatBubbleHost />
       <ToastViewport />
     </div>
   );

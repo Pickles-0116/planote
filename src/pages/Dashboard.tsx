@@ -12,6 +12,7 @@
  * 已于本 change 移除——见 openspec/changes/add-data-binding-dashboard/proposal.md。
  */
 
+import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   TrendingUp,
@@ -24,6 +25,7 @@ import {
   Wand2,
   Notebook,
   Calendar,
+  Clock,
 } from 'lucide-react';
 import Card from '@/components/ui/Card';
 import Skeleton from '@/components/shell/Skeleton';
@@ -34,6 +36,9 @@ import { useTodayFocus } from '@/stores/hooks/useTodayFocus';
 import { useItemsForPlan } from '@/stores/hooks/useItemsForPlan';
 import { useUpcomingPlans } from '@/stores/hooks/useUpcomingPlans';
 import { useRecentBlogs } from '@/stores/hooks/useRecentBlogs';
+import { useRecentActivity, type Activity } from '@/stores/hooks/useRecentActivity';
+import { usePlans } from '@/stores/hooks/usePlans';
+import { useBlogs } from '@/stores/hooks/useBlogs';
 import type { ItemStatus, UrgencyLevel } from '@/types/domain';
 
 /* ============================================================
@@ -59,6 +64,13 @@ const URGENCY_DAYS: Record<UrgencyLevel, string> = {
   orange: '1-3 天',
   yellow: '4-7 天',
   none: '未来',
+};
+
+const ACTIVITY_DOT: Record<Activity['color'], string> = {
+  emerald: 'bg-emerald-500',
+  blue: 'bg-blue-500',
+  purple: 'bg-purple-500',
+  amber: 'bg-amber-500',
 };
 
 /* ============================================================
@@ -217,6 +229,20 @@ export default function Dashboard() {
   const focusItems = useItemsForPlan(focus?.plan.id);
   const upcoming = useUpcomingPlans(3);
   const recentBlogs = useRecentBlogs(3);
+  const activities = useRecentActivity(5);
+  const allPlans = usePlans();
+  const allBlogs = useBlogs();
+
+  // 完成提醒条件：有100%完成的计划且该计划没有关联博客
+  const hasCompletedWithoutBlog = useMemo(() => {
+    if (!allPlans || !allBlogs) return false;
+    const donePlans = allPlans.filter((p) => p.progress >= 100);
+    if (donePlans.length === 0) return false;
+    // 检查是否有计划没有关联博客
+    const blogSourcePlanIds = new Set(allBlogs.map((b) => b.sourcePlanId).filter(Boolean));
+    return donePlans.some((p) => !blogSourcePlanIds.has(p.id));
+  }, [allPlans, allBlogs]);
+
   const isLoading =
     stats === undefined ||
     upcoming === undefined ||
@@ -412,8 +438,8 @@ export default function Dashboard() {
 
         {/* 右 1/3 */}
         <div className="space-y-6">
-          {/* 完成提醒：仅在有已完成计划时显示 */}
-          {stats.completedItems > 0 && (
+          {/* 完成提醒：仅在有100%完成但没有关联博客的计划时显示 */}
+          {hasCompletedWithoutBlog && (
             <section className="bg-gradient-to-br from-accent-50 to-amber-50 dark:from-accent-900/20 dark:to-amber-900/20 border border-accent-200 dark:border-accent-800/40 rounded-2xl p-5 animate-fadeUp animate-delay-250">
               <div className="flex items-start gap-3 mb-3">
                 <div className="w-8 h-8 rounded-full bg-accent-500 flex items-center justify-center flex-shrink-0">
@@ -479,6 +505,31 @@ export default function Dashboard() {
               </div>
             )}
           </Card>
+
+          {/* 最近活动 */}
+          {activities && activities.length > 0 && (
+            <Card className="animate-delay-400">
+              <h3 className="text-sm font-semibold mb-4 flex items-center gap-2 text-brand-900 dark:text-stone-100">
+                <Clock size={14} className="text-brand-400 dark:text-stone-500" />
+                最近活动
+              </h3>
+              <div className="space-y-3">
+                {activities.map((act) => (
+                  <div key={act.id} className="flex items-start gap-2.5">
+                    <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${ACTIVITY_DOT[act.color]}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-brand-800 dark:text-stone-200 leading-relaxed truncate">
+                        {act.text}
+                      </p>
+                      <p className="text-[10px] text-brand-400 dark:text-stone-500 mt-0.5">
+                        {act.relativeTime}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
         </div>
       </div>
     </div>

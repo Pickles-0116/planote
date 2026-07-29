@@ -19,17 +19,20 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Notebook, SearchX } from 'lucide-react';
+import { Notebook, PenLine, SearchX } from 'lucide-react';
 import EmptyState from '@/components/shell/EmptyState';
 import Skeleton from '@/components/shell/Skeleton';
 import BlogCard from '@/features/blog/components/BlogCard';
 import BlogListFilters from '@/features/blog/components/BlogListFilters';
 import BlogListToolbar from '@/features/blog/components/BlogListToolbar';
-import NewBlogMenu from '@/features/blog/components/NewBlogMenu';
 import ImportMarkdownButton from '@/features/blog/components/ImportMarkdownButton';
+import BlogByPlanView from '@/features/blog/components/BlogByPlanView';
+import CollectionFolderCard from '@/features/blog/components/CollectionFolderCard';
+import { useCollectedBlogIds } from '@/features/blog/hooks/useCollectedBlogIds';
+import { useCollectionsWithBlogCount } from '@/features/blog/hooks/useCollectionsWithBlogCount';
 import { useFilteredBlogs } from '@/features/blog/hooks/useFilteredBlogs';
-import { useBlogs, useFrameworks, useTags, useUIStore } from '@/stores';
-import type { Framework, ID } from '@/types/domain';
+import { useBlogs, useAllTemplates, useTags, useUIStore } from '@/stores';
+import type { BlogTemplate, BlogSource, ID } from '@/types/domain';
 import type { BlogFilters } from '@/features/blog/hooks/useFilteredBlogs';
 
 export default function BlogList(): JSX.Element {
@@ -45,40 +48,59 @@ export default function BlogList(): JSX.Element {
 
   // 本地 state（不持久化）
   const [query, setQuery] = useState<string>('');
-  const [frameworkId, setFrameworkId] = useState<ID | null>(null);
+  const [templateId, setTemplateId] = useState<ID | null>(null);
   const [selectedTagIds, setSelectedTagIds] = useState<ID[]>([]);
+  const [source, setSource] = useState<BlogSource | 'all'>('all');
+  const [wordCountRange, setWordCountRange] = useState<{ min: number; max: number } | null>(null);
+  const [dateRange, setDateRange] = useState<{ start: string; end: string } | null>(null);
 
   // 数据订阅
   const blogs = useBlogs();
-  const frameworks = useFrameworks();
+  const templates = useAllTemplates();
   const tags = useTags();
+  const collectedBlogIds = useCollectedBlogIds();
+  const collectionsWithCount = useCollectionsWithBlogCount();
 
-  // 框架名映射：frameworkId → Framework（O(1) 查找）
-  const frameworkMap = useMemo(() => {
-    const m = new Map<string, Framework>();
-    if (frameworks) {
-      for (const f of frameworks) m.set(f.id, f);
+  // 模板名映射：templateId → BlogTemplate（O(1) 查找）
+  const templateMap = useMemo(() => {
+    const m = new Map<string, BlogTemplate>();
+    if (templates) {
+      for (const t of templates) m.set(t.id, t);
     }
     return m;
-  }, [frameworks]);
+  }, [templates]);
 
   const filters: BlogFilters = {
     query,
-    frameworkId,
+    frameworkId: null,
+    templateId,
     selectedTagIds,
     statusFilter,
+    source,
+    wordCountRange,
+    dateRange,
   };
 
   // 组合筛选 + 排序
   const filtered = useFilteredBlogs(blogs, filters, sort);
 
+  // 从筛选结果中去掉已加入收藏夹的博客（byPlan 视图不受影响）
+  const uncollectedBlogs = useMemo(() => {
+    if (!filtered) return filtered;
+    if (!collectedBlogIds || collectedBlogIds.size === 0) return filtered;
+    return filtered.filter((b) => !collectedBlogIds.has(b.id));
+  }, [filtered, collectedBlogIds]);
+
   const hasFilters: boolean = useMemo(
     () =>
       query !== '' ||
-      frameworkId !== null ||
+      templateId !== null ||
       selectedTagIds.length > 0 ||
-      statusFilter !== 'all',
-    [query, frameworkId, selectedTagIds, statusFilter],
+      statusFilter !== 'all' ||
+      source !== 'all' ||
+      wordCountRange !== null ||
+      dateRange !== null,
+    [query, templateId, selectedTagIds, statusFilter, source, wordCountRange, dateRange],
   );
 
   const handleTagToggle = useCallback((id: ID) => {
@@ -89,9 +111,12 @@ export default function BlogList(): JSX.Element {
 
   const clearAllFilters = useCallback(() => {
     setQuery('');
-    setFrameworkId(null);
+    setTemplateId(null);
     setSelectedTagIds([]);
     setStatusFilter('all');
+    setSource('all');
+    setWordCountRange(null);
+    setDateRange(null);
   }, [setStatusFilter]);
 
   // 加载态
@@ -116,7 +141,7 @@ export default function BlogList(): JSX.Element {
         <EmptyState
           icon={Notebook}
           title="还没有博客"
-          description="用富文本写下你的第一篇复盘，或从外部 Markdown 导入已有笔记"
+          description="用富文本写下你的第一篇复盘，或一次性批量导入多篇 Markdown 笔记（≤ 5MB / 个）"
           variant="illustration"
         />
         <div className="flex items-center justify-center gap-3">
@@ -127,29 +152,44 @@ export default function BlogList(): JSX.Element {
           >
             写新博客
           </button>
-          <ImportMarkdownButton />
+          <ImportMarkdownButton label="批量导入 .md" />
         </div>
       </div>
     );
   }
 
-  // 筛选无结果
-  if (filtered !== undefined && filtered.length === 0) {
+  // 筛选无结果（但收藏夹仍展示）
+  if (uncollectedBlogs !== undefined && uncollectedBlogs.length === 0 && view !== 'byPlan') {
     return (
       <div className="space-y-6">
-        <PageHeader count={blogs.length} />
+        <PageHeader count={blogs.length}>
+          <button
+            type="button"
+            onClick={() => navigate('/blogs/new')}
+            className="px-4 py-2.5 rounded-xl bg-brand-900 dark:bg-stone-100 text-white dark:text-stone-900 text-sm font-medium hover:bg-brand-800 dark:hover:bg-stone-200 transition shadow-sm flex items-center gap-2"
+          >
+            <PenLine size={14} />
+            新建博客
+          </button>
+        </PageHeader>
         <BlogListFilters
           query={query}
           onQueryChange={setQuery}
-          frameworkId={frameworkId}
-          onFrameworkChange={setFrameworkId}
+          templateId={templateId}
+          onTemplateChange={setTemplateId}
           selectedTagIds={selectedTagIds}
           onTagToggle={handleTagToggle}
           statusFilter={statusFilter}
           onStatusChange={setStatusFilter}
           onClearFilters={clearAllFilters}
           hasFilters={hasFilters}
-          frameworks={frameworks ?? []}
+          source={source}
+          onSourceChange={setSource}
+          wordCountRange={wordCountRange}
+          onWordCountRangeChange={setWordCountRange}
+          dateRange={dateRange}
+          onDateRangeChange={setDateRange}
+          templates={templates ?? []}
           tags={tags ?? []}
         />
         <BlogListToolbar
@@ -158,15 +198,33 @@ export default function BlogList(): JSX.Element {
           sort={sort}
           onSortChange={setSort}
         />
+
+        {/* 收藏夹入口卡片（即使无未收藏博客也展示） */}
+        {collectionsWithCount && collectionsWithCount.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fadeUp">
+            {collectionsWithCount.map(({ collection, blogCount }) => (
+              <CollectionFolderCard
+                key={collection.id}
+                collection={collection}
+                blogCount={blogCount}
+              />
+            ))}
+          </div>
+        )}
+
         <EmptyState
           icon={SearchX}
-          title="没找到匹配的博客"
-          description={query ? `没有博客包含「${query}」` : '当前筛选条件下无博客'}
-          action={{
+          title={hasFilters ? '没找到匹配的博客' : '所有博客都已收藏'}
+          description={
+            hasFilters
+              ? (query ? `没有博客包含「${query}」` : '当前筛选条件下无博客')
+              : '点击上方文件夹查看收藏的博客'
+          }
+          action={hasFilters ? {
             label: '清除筛选',
             onClick: clearAllFilters,
-            variant: 'secondary',
-          }}
+            variant: 'secondary' as const,
+          } : undefined}
           variant="compact"
         />
       </div>
@@ -176,20 +234,33 @@ export default function BlogList(): JSX.Element {
   return (
     <div className="space-y-6">
       <PageHeader count={blogs.length}>
-        <NewBlogMenu />
+        <button
+          type="button"
+          onClick={() => navigate('/blogs/new')}
+          className="px-4 py-2.5 rounded-xl bg-brand-900 dark:bg-stone-100 text-white dark:text-stone-900 text-sm font-medium hover:bg-brand-800 dark:hover:bg-stone-200 transition shadow-sm flex items-center gap-2"
+        >
+          <PenLine size={14} />
+          新建博客
+        </button>
       </PageHeader>
       <BlogListFilters
         query={query}
         onQueryChange={setQuery}
-        frameworkId={frameworkId}
-        onFrameworkChange={setFrameworkId}
+        templateId={templateId}
+        onTemplateChange={setTemplateId}
         selectedTagIds={selectedTagIds}
         onTagToggle={handleTagToggle}
         statusFilter={statusFilter}
         onStatusChange={setStatusFilter}
         onClearFilters={clearAllFilters}
         hasFilters={hasFilters}
-        frameworks={frameworks ?? []}
+        source={source}
+        onSourceChange={setSource}
+        wordCountRange={wordCountRange}
+        onWordCountRangeChange={setWordCountRange}
+        dateRange={dateRange}
+        onDateRangeChange={setDateRange}
+        templates={templates ?? []}
         tags={tags ?? []}
       />
       <BlogListToolbar
@@ -198,32 +269,49 @@ export default function BlogList(): JSX.Element {
         sort={sort}
         onSortChange={setSort}
       />
-      {filtered && view === 'grid' && (
-        <div
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-          data-view="grid"
-        >
-          {filtered.map((b) => (
-            <BlogCard
-              key={b.id}
-              blog={b}
-              density="grid"
-              framework={b.frameworkId ? frameworkMap.get(b.frameworkId) : undefined}
+
+      {/* 收藏夹入口卡片（grid/list 视图，有收藏夹时展示） */}
+      {view !== 'byPlan' && collectionsWithCount && collectionsWithCount.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fadeUp">
+          {collectionsWithCount.map(({ collection, blogCount }) => (
+            <CollectionFolderCard
+              key={collection.id}
+              collection={collection}
+              blogCount={blogCount}
             />
           ))}
         </div>
       )}
-      {filtered && view === 'list' && (
+
+      {uncollectedBlogs && view === 'grid' && (
+        <div
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+          data-view="grid"
+        >
+          {uncollectedBlogs.map((b) => (
+            <BlogCard
+              key={b.id}
+              blog={b}
+              density="grid"
+              framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
+            />
+          ))}
+        </div>
+      )}
+      {uncollectedBlogs && view === 'list' && (
         <div className="space-y-2" data-view="list">
-          {filtered.map((b) => (
+          {uncollectedBlogs.map((b) => (
             <BlogCard
               key={b.id}
               blog={b}
               density="list"
-              framework={b.frameworkId ? frameworkMap.get(b.frameworkId) : undefined}
+              framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
             />
           ))}
         </div>
+      )}
+      {filtered && view === 'byPlan' && (
+        <BlogByPlanView blogs={filtered} />
       )}
     </div>
   );

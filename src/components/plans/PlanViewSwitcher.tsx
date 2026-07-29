@@ -17,7 +17,7 @@
  * 切换由父组件 onChange 回调处理（典型调用：从 useUIStore 读 planListView 并 setPlanListView）。
  */
 
-import { LayoutGrid, List, Table2 } from 'lucide-react';
+import { LayoutGrid, List, Table2, TreePine } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PlanListView } from '@/stores/uiStore';
 
@@ -31,6 +31,7 @@ const OPTIONS: Option[] = [
   { value: 'group', label: '分组', icon: LayoutGrid },
   { value: 'all', label: '全部', icon: List },
   { value: 'table', label: '表格', icon: Table2 },
+  { value: 'tree', label: '树形', icon: TreePine },
 ];
 
 interface Props {

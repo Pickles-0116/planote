@@ -44,6 +44,8 @@ interface Props {
   onSaveNow?: () => void;
   /** add-blog-attachment 增量：附件按钮点击（父组件触发隐藏 file input）。 */
   onAttachClick?: () => void;
+  /** v1.3-AI：打开 AI 写作面板。 */
+  onAIWriting?: () => void;
 }
 
 // 单按钮定义
@@ -159,6 +161,7 @@ function EditorToolbarBase({
   onApplyFramework,
   onSaveNow,
   onAttachClick,
+  onAIWriting,
 }: Props): JSX.Element {
   // 只读模式：工具栏全部隐藏
   if (readOnly) return <></>;
@@ -249,6 +252,25 @@ function EditorToolbarBase({
         {frameworkApplied ? <Check size={14} /> : <Sparkles size={14} />}
         应用框架
       </button>
+
+      {/* v1.3-AI：AI 写作按钮 */}
+      {onAIWriting && (
+        <button
+          type="button"
+          aria-label="AI 写作"
+          disabled={!editor}
+          onClick={onAIWriting}
+          className={cn(
+            'h-8 px-2.5 rounded-lg flex items-center gap-1.5 transition text-xs font-medium',
+            'disabled:opacity-40 disabled:cursor-not-allowed',
+            'bg-gradient-to-r from-violet-500 to-indigo-500 text-white hover:from-violet-600 hover:to-indigo-600 shadow-sm',
+          )}
+          title="AI 辅助写作"
+        >
+          <Sparkles size={14} />
+          AI 写作
+        </button>
+      )}
 
       <div className="ml-auto flex items-center gap-3">
         {saveStatus !== undefined && <SaveStatusBadge status={saveStatus} />}

@@ -29,11 +29,13 @@ import CompletionBanner from '@/features/plan/components/CompletionBanner';
 import PlanKeyMetrics from '@/features/plan/components/PlanKeyMetrics';
 import ItemChecklist from '@/features/plan/components/ItemChecklist';
 import PlanBlogsSection from '@/features/plan/components/PlanBlogsSection';
+import PlanSubPlansSection from '@/features/plan/components/PlanSubPlansSection';
 import { useCompletionBanner } from '@/features/plan/hooks/useCompletionBanner';
 import { useToggleItem } from '@/features/plan/hooks/useToggleItem';
+import { useItemCRUD } from '@/features/plan/hooks/useItemCRUD';
 import { useItemHashHighlight } from '@/features/plan/hooks/useItemHashHighlight';
 import PlanDetailSkeleton from './PlanDetailSkeleton';
-import { usePlan, useItemsForPlan, useUIStore } from '@/stores';
+import { usePlan, useItemsForPlan } from '@/stores';
 
 export default function PlanDetail() {
   const { id } = useParams<{ id: string }>();
@@ -41,8 +43,9 @@ export default function PlanDetail() {
   const plan = usePlan(id);
   const items = useItemsForPlan(id);
   const { shouldShow, dismiss } = useCompletionBanner(plan);
-  const openDrawer = useUIStore((s) => s.openDrawer);
   const { toggle, setStatus } = useToggleItem(id ?? '');
+  // v1.1 修：用 useItemCRUD 提供 add/update/remove（修复「+ 添加事项」永远 disabled 的 bug）
+  const { add: addItem, update: updateItem, remove: removeItem } = useItemCRUD(id ?? '');
   // 监听 #item-{id} 锚点：滚动 + 1.5s 高亮（add-kanban-board 增量）
   useItemHashHighlight();
 
@@ -75,7 +78,11 @@ export default function PlanDetail() {
   }
 
   const handleGenerateBlog = () => {
-    openDrawer('framework', { sourcePlanId: plan.id });
+    // 直接跳转新建博客页，自动打开 AI 写作面板
+    const params = new URLSearchParams();
+    params.set('sourcePlanId', plan.id);
+    params.set('autoOpenAI', 'true');
+    navigate(`/blogs/new?${params.toString()}`);
   };
 
   return (
@@ -115,6 +122,15 @@ export default function PlanDetail() {
             items={items}
             onToggle={toggle}
             onSetStatus={setStatus}
+            onAdd={async ({ title }) => {
+              await addItem({ title });
+            }}
+            onUpdate={async (itemId, patch) => {
+              await updateItem(itemId, patch);
+            }}
+            onRemove={async (itemId) => {
+              await removeItem(itemId);
+            }}
           />
         </div>
         <div className="col-span-1">
@@ -122,6 +138,7 @@ export default function PlanDetail() {
             blogIds={plan.blogIds}
             onGenerateBlog={handleGenerateBlog}
           />
+          <PlanSubPlansSection childPlanIds={plan.childPlanIds} />
         </div>
       </div>
     </div>

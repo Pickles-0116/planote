@@ -185,6 +185,71 @@ export interface Plan {
 
 // ========== 博客 ==========
 
+/** AI 写作风格参数（博客模板的核心差异点）。 */
+export interface AIStyleParams {
+  style: 'professional' | 'casual' | 'academic' | 'narrative' | 'custom';
+  styleDescription?: string;
+  tone: 'positive' | 'neutral' | 'reflective' | 'custom';
+  audience: 'self' | 'team' | 'public' | 'custom';
+  minWords: number;
+  maxWords: number;
+}
+
+/** 博客模板分类（扩展现有 FrameworkCategory + custom）。 */
+export type TemplateCategory = FrameworkCategory | 'decision' | 'analysis' | 'custom';
+
+/** 博客模板 = 结构 + AI 语义（风格/语气/读者/字数），面向 AI 生成。 */
+export interface BlogTemplate {
+  id: ID;
+  name: string;
+  description: string;
+  category: TemplateCategory;
+  icon: string;
+  sections: FrameworkSection[];
+  aiParams: AIStyleParams;
+  /** v1.4-Organize：标签 ID 列表。 */
+  tagIds: ID[];
+  useCount: number;
+  lastUsedAt?: ISODate;
+  builtin: boolean;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+/** AI 服务商类型。 */
+export type AIProvider = 'openai' | 'claude' | 'qwen' | 'custom';
+
+/** AI 模型配置（BYOK 模式，Key 仅存本地）。 */
+export interface AIModelProfile {
+  id: ID;
+  name: string;
+  provider: AIProvider;
+  apiKey: string;
+  baseUrl?: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  role: 'default' | 'backup';
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+/** AI 生成模式。 */
+export type AIGenerateMode = 'template' | 'imitate' | 'polish' | 'rewrite' | 'chat';
+
+/** AI 调用日志（IndexedDB 存储，用于统计面板）。 */
+export interface AICallLog {
+  id: ID;
+  modelProfileId: ID;
+  mode: AIGenerateMode;
+  promptTokens: number;
+  completionTokens: number;
+  durationMs: number;
+  success: boolean;
+  errorCode?: string;
+  createdAt: ISODate;
+}
+
 /** 博客实体（富文本文章）。 */
 export interface Blog {
   id: ID;
@@ -205,8 +270,13 @@ export interface Blog {
   tagIds: ID[];
   /** 从哪个计划生成（直接创作时为 undefined）。 */
   sourcePlanId?: ID;
-  /** 用了哪个框架（直接创作时为 undefined）。 */
+  /**
+   * @deprecated v1.4-Unify：统一使用 `templateId`。
+   * 保留读取兼容（fallback），新写入不再使用。
+   */
   frameworkId?: ID;
+  /** 用了哪个博客模板（AI 生成时关联）。v1.4-Unify 统一使用此字段。 */
+  templateId?: ID;
   attachmentIds: ID[];
   status: BlogStatus;
   source: BlogSource;
@@ -215,3 +285,166 @@ export interface Blog {
   /** 发布时由 BlogRepo 自动填入。 */
   publishedAt?: ISODate;
 }
+
+// ========== 收藏夹（v1.4-Organize） ==========
+
+/** 收藏夹可关联的实体类型。 */
+export type CollectionEntityType = 'plan' | 'blog' | 'template';
+
+/** 收藏夹实体（用户创建的逻辑分组）。 */
+export interface Collection {
+  id: ID;
+  name: string;
+  /** Lucide 图标名。 */
+  icon: string;
+  /** hex 颜色（如 `#3B82F6`）。 */
+  color: string;
+  /** 排序序号。 */
+  sortOrder: number;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+/** 收藏夹-实体关联记录（多对多）。 */
+export interface CollectionItem {
+  id: ID;
+  collectionId: ID;
+  entityType: CollectionEntityType;
+  entityId: ID;
+  addedAt: ISODate;
+}
+
+// ========== AI 对话助手（v1.5-AI Chat） ==========
+
+/**
+ * AI 对话意图分类（与 System Prompt 中 5 意图对应）。
+ *
+ * - `create_plan`: 用户想要创建/规划目标
+ * - `create_blog`: 用户想要撰写博客文章
+ * - `create_template`: 用户想要设计博客模板
+ * - `query`: 用户想查询应用数据或统计
+ * - `chat`: 普通对话（不属于以上 4 种）
+ *
+ * 来源：PRD §F2.1 意图分类器。
+ */
+export type ChatIntent = 'create_plan' | 'create_blog' | 'create_template' | 'query' | 'chat';
+
+/**
+ * 对话交互模式。
+ *
+ * - `guided`: 引导模式 — AI 主动追问缺失字段
+ * - `free`: 自由模式 — AI 用合理默认值自动补全
+ *
+ * 状态持久化在 `ChatContext.mode`。
+ */
+export type ChatMode = 'guided' | 'free';
+
+/**
+ * 对话消息。`actionCard` 字段供 ai-chat-intent-routing 挂载操作卡片，
+ * `status` 字段用于发送中/失败 UI 状态。
+ *
+ * 来源：PRD §F1.4 数据模型。
+ */
+export interface ChatMessage {
+  id: ID;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  /** Unix 毫秒时间戳。 */
+  timestamp: number;
+  /** AI 消息携带的操作卡片（plan_preview / blog_preview / template_preview / data_query / suggestion）。 */
+  actionCard?: ActionCard;
+  /** 消息状态：发送中/已发送/失败。仅 user 消息使用。 */
+  status?: 'sending' | 'sent' | 'error';
+}
+
+/**
+ * 对话操作上下文：跟踪当前意图、收集到的字段、用户编辑中的草稿。
+ *
+ * 在引导模式下 `collectedFields` 记录已询问并确认的字段名；
+ * `draftData` 暂存用户编辑中（未提交）的实体数据，避免编辑丢失。
+ */
+export interface ChatContext {
+  currentIntent?: ChatIntent;
+  /** 编辑中的草稿数据。类型取决于 currentIntent。 */
+  draftData?: Partial<Plan> | Partial<Blog> | Partial<BlogTemplate>;
+  /** 引导模式下已收集的字段名。 */
+  collectedFields?: string[];
+  /** 当前交互模式。 */
+  mode?: ChatMode;
+}
+
+/**
+ * 对话会话。`messages` 数组按时间序存储，`context` 跟踪当前操作上下文。
+ *
+ * 来源：PRD §F1.4 数据模型。
+ */
+export interface ChatSession {
+  id: ID;
+  /** 会话标题：自动从首条 user 消息提取（≤ 30 字）或手动命名。 */
+  title: string;
+  messages: ChatMessage[];
+  context: ChatContext;
+  /** 会话绑定的 AI 模型 ID（可选；缺省 = 全局默认模型）。 */
+  modelProfileId?: ID;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+// ========== 操作卡片（ActionCard） ==========
+
+/** 计划预览卡片数据（来自 ```tool_call``` tool=create_plan）。 */
+export interface PlanPreviewData {
+  title: string;
+  description?: string;
+  level: PlanLevel;
+  timeDim: PlanTimeDim;
+  startDate?: ISODate;
+  endDate?: ISODate;
+  items: Array<{ title: string; description?: string }>;
+}
+
+/** 博客预览卡片数据（来自 tool=create_blog）。 */
+export interface BlogPreviewData {
+  title: string;
+  content: string;
+  style: 'professional' | 'casual' | 'academic' | 'narrative';
+  templateId?: ID;
+  tags?: string[];
+}
+
+/** 模板预览卡片数据（来自 tool=create_template）。 */
+export interface TemplatePreviewData {
+  name: string;
+  description: string;
+  category: TemplateCategory;
+  sections: Array<{ heading: string; guide: string; placeholder: string }>;
+  aiParams: AIStyleParams;
+}
+
+/** 数据查询请求（来自 tool=get_*）。 */
+export interface DataQueryRequest {
+  tool: 'get_plans' | 'get_blogs' | 'get_templates' | 'get_stats';
+  filter?: Record<string, unknown>;
+}
+
+/** 操作建议数据（来自 tool=suggest）。 */
+export interface SuggestionData {
+  type: 'overdue_plans' | 'stale_drafts' | 'paused_too_long';
+  title: string;
+  entityIds: ID[];
+}
+
+/**
+ * 操作卡片判别联合。AI 在回复中输出 ```tool_call``` 块后，前端解析为对应类型。
+ *
+ * 用 `switch (card.type)` 可在编译期收窄 data 字段类型。
+ *
+ * 来源：ai-chat-foundation design.md 决策 6。
+ */
+export type ActionCard =
+  | { type: 'plan_preview'; data: PlanPreviewData }
+  | { type: 'blog_preview'; data: BlogPreviewData }
+  | { type: 'template_preview'; data: TemplatePreviewData }
+  | { type: 'data_query'; tool: DataQueryRequest['tool']; filter?: Record<string, unknown> }
+  | { type: 'suggestion'; data: SuggestionData }
+  | { type: 'unknown'; rawTool: string; rawData: unknown };

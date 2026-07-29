@@ -11,6 +11,7 @@ import {
   Database,
   Info,
   MessageCircle,
+  Bot,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -18,9 +19,11 @@ import ThemeSettings from './ThemeSettings';
 import DataSettings from './DataSettings';
 import AboutSettings from './AboutSettings';
 import FeedbackSettings from './FeedbackSettings';
+import ModelConfigPanel from '@/features/ai/components/ModelConfigPanel';
+import CallStatsPanel from '@/features/ai/components/CallStatsPanel';
 import DataInspector from '@/features/settings/components/DataInspector';
 
-type SettingsKey = 'theme' | 'data' | 'about' | 'feedback';
+type SettingsKey = 'theme' | 'ai' | 'data' | 'about' | 'feedback';
 
 interface NavItem {
   key: SettingsKey;
@@ -30,6 +33,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'theme', label: '主题', icon: Palette },
+  { key: 'ai', label: 'AI 模型', icon: Bot },
   { key: 'data', label: '数据', icon: Database },
   { key: 'about', label: '关于', icon: Info },
   { key: 'feedback', label: '反馈', icon: MessageCircle },
@@ -37,6 +41,7 @@ const NAV_ITEMS: NavItem[] = [
 
 const HASH_TO_KEY: Record<string, SettingsKey> = {
   theme: 'theme',
+  ai: 'ai',
   data: 'data',
   about: 'about',
   feedback: 'feedback',
@@ -117,6 +122,16 @@ export default function Settings(): JSX.Element {
       {/* 右侧内容 */}
       <div className="flex-1 min-w-0 space-y-6">
         {activeKey === 'theme' && <ThemeSettings />}
+        {activeKey === 'ai' && (
+          <div className="space-y-6">
+            <div id="ai-models" className="bg-white dark:bg-stone-800 rounded-2xl border border-stone-200 dark:border-stone-700 p-6 scroll-mt-4">
+              <ModelConfigPanel />
+            </div>
+            <div className="bg-white dark:bg-stone-800 rounded-2xl border border-stone-200 dark:border-stone-700 p-6">
+              <CallStatsPanel />
+            </div>
+          </div>
+        )}
         {activeKey === 'data' && <DataSettings />}
         {activeKey === 'about' && <AboutSettings />}
         {activeKey === 'feedback' && <FeedbackSettings />}
