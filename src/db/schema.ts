@@ -25,6 +25,7 @@ import type {
   Collection,
   CollectionItem,
   ChatSession,
+  Folder,
 } from '@/types/domain';
 
 /** Meta 表行结构：键值对（如 `{ key: 'seeded', value: true }`）。 */
@@ -51,6 +52,7 @@ export class PlanoteDB extends Dexie {
   declare collections: Table<Collection, ID>;
   declare collectionItems: Table<CollectionItem, ID>;
   declare chatSessions: Table<ChatSession, ID>;
+  declare folders: Table<Folder, ID>;
 
   // 1 张 meta 表（seed 标记、用户设置、同步游标等）
   declare meta: Table<MetaRow, string>;
@@ -112,6 +114,25 @@ export class PlanoteDB extends Dexie {
       collections: '&id, name, sortOrder',
       collectionItems: '&id, collectionId, entityType, entityId, [collectionId+entityType]',
       chatSessions: '&id, updatedAt, createdAt',
+      meta: '&key',
+    });
+
+    // v1.2-Folders：新增 folders 表 + blogs 加 folderId 索引。
+    // 必须完整重声明 v4 全部表（Dexie 要求每个 version 列出当前活跃的全部表）。
+    // 来源：V1.2 design.md §文件夹数据模型。
+    this.version(5).stores({
+      plans: '&id, level, timeDim, status, endDate, urgency, updatedAt, *tagIds, *childPlanIds, parentPlanId',
+      items: '&id, planId, status, dueDate, order, [planId+order]',
+      blogs: '&id, status, sourcePlanId, frameworkId, templateId, folderId, updatedAt, *tagIds, *attachmentIds',
+      tags: '&id, &name, usageCount',
+      attachments: '&id, blogId, uploadedAt',
+      frameworks: '&id, category, builtin',
+      blogTemplates: '&id, category, builtin, useCount, updatedAt, *tagIds',
+      aiCallLogs: '&id, modelProfileId, mode, createdAt',
+      collections: '&id, name, sortOrder',
+      collectionItems: '&id, collectionId, entityType, entityId, [collectionId+entityType]',
+      chatSessions: '&id, updatedAt, createdAt',
+      folders: '&id, parentId, type, depth, order, blogCount',
       meta: '&key',
     });
   }

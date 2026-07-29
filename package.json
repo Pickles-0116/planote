@@ -1,7 +1,7 @@
 {
   "name": "planote-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "Planote · 计划与博客一体化管理工具 (Sprint 1: Scaffold + Dashboard)",
   "scripts": {

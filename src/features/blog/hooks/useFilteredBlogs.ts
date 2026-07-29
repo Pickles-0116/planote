@@ -7,8 +7,13 @@
  *   useFilteredBlogs(blogs, filters, sort)
  *     ├─ useMemo: status filter
  *     ├─ useMemo: framework filter
+ *     ├─ useMemo: template filter
  *     ├─ useMemo: tag filter (OR)
- *     ├─ useMemo: search filter (title / excerpt / tagIds)
+ *     ├─ useMemo: source filter
+ *     ├─ useMemo: word count range
+ *     ├─ useMemo: date range
+ *     ├─ useMemo: folder filter         ← V1.2 F4：按文件夹过滤
+ *     ├─ useMemo: search filter          ← V1.2 B4：改走 BlogSearchService（含 contentText）
  *     └─ useMemo: sort (comparator)
  *     ↓
  *   [GridView | ListView]            ← 仅切渲染分支
@@ -22,6 +27,7 @@
 import { useMemo } from 'react';
 import type { Blog, BlogStatus, BlogSource, ID } from '@/types/domain';
 import { sortBlogs, type BlogSortKey } from '../utils/sortBlogs';
+import { blogSearchService } from '../search/SearchService';
 
 /** 列表页筛选条件。 */
 export interface BlogFilters {
@@ -38,6 +44,8 @@ export interface BlogFilters {
   wordCountRange: { min: number; max: number } | null;
   /** v1.4-Organize：日期范围（createdAt）。 */
   dateRange: { start: string; end: string } | null;
+  /** V1.2 F4：按文件夹筛选（null = 不过滤，即「全部文件夹」）。 */
+  folderId: ID | null;
 }
 
 /** 状态过滤单选项（含「全部」）。 */
@@ -53,20 +61,30 @@ export const DEFAULT_BLOG_FILTERS: BlogFilters = {
   source: 'all',
   wordCountRange: null,
   dateRange: null,
+  folderId: null,
 };
+
+/**
+ * 搜索结果在 Blog 基础上附加的评分与片段字段。
+ * 当无查询时，searchScore=0 / searchSnippet=''。
+ */
+export interface BlogWithSnippet extends Blog {
+  searchScore: number;
+  searchSnippet: string;
+}
 
 /**
  * 组合筛选 + 搜索 + 排序。
  * @param blogs 原始 blogs（来自 useBlogs）；undefined 表示 live query 首帧
  * @param filters 筛选条件
  * @param sort 排序键
- * @returns 过滤+排序后的 Blog[]；undefined 表示上游未就绪
+ * @returns 过滤+排序后的 BlogWithSnippet[]；undefined 表示上游未就绪
  */
 export function useFilteredBlogs(
   blogs: Blog[] | undefined,
   filters: BlogFilters,
   sort: BlogSortKey,
-): Blog[] | undefined {
+): BlogWithSnippet[] | undefined {
   // 1) status
   const statusFiltered = useMemo<Blog[] | undefined>(() => {
     if (!blogs) return undefined;
@@ -131,23 +149,32 @@ export function useFilteredBlogs(
     });
   }, [wordCountFiltered, filters.dateRange]);
 
-  // 4) search (title / excerpt / tagIds)
-  const searched = useMemo<Blog[] | undefined>(() => {
+  // 3.8) folder (V1.2 F4)
+  const folderFiltered = useMemo<Blog[] | undefined>(() => {
     if (!dateFiltered) return undefined;
+    if (!filters.folderId) return dateFiltered;
+    return dateFiltered.filter((b) => b.folderId === filters.folderId);
+  }, [dateFiltered, filters.folderId]);
+
+  // 4) search（V1.2 B4：改走 BlogSearchService，覆盖 title + contentText）
+  const searched = useMemo<BlogWithSnippet[] | undefined>(() => {
+    if (!folderFiltered) return undefined;
     const needle = filters.query.trim().toLowerCase();
-    if (!needle) return dateFiltered;
-    return dateFiltered.filter((b) => {
-      if (b.title.toLowerCase().includes(needle)) return true;
-      if (b.excerpt.toLowerCase().includes(needle)) return true;
-      if (b.tagIds.some((t) => t.toLowerCase().includes(needle))) return true;
-      return false;
-    });
-  }, [tagFiltered, filters.query]);
+    if (!needle) {
+      // 无查询：透传，附空评分/片段
+      return folderFiltered.map((b) => ({ ...b, searchScore: 0, searchSnippet: '' }));
+    }
+    // 载入当前（已按文件夹过滤的）文档集合，再检索
+    blogSearchService.setDocuments(folderFiltered);
+    return blogSearchService
+      .search(needle)
+      .map((r) => ({ ...r.blog, searchScore: r.score, searchSnippet: r.snippet }));
+  }, [folderFiltered, filters.query]);
 
   // 5) sort
-  const sorted = useMemo<Blog[] | undefined>(() => {
+  const sorted = useMemo<BlogWithSnippet[] | undefined>(() => {
     if (!searched) return undefined;
-    return sortBlogs(searched, sort);
+    return sortBlogs(searched, sort) as BlogWithSnippet[];
   }, [searched, sort]);
 
   return sorted;

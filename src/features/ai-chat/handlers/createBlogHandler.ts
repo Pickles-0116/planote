@@ -10,6 +10,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { AppError } from '@/db/repos/types';
 import { markdownToTiptapJSON } from '@/features/blog/utils/markdownToTiptap';
 import type { BlogPreviewData } from '@/types/domain';
+import { ROOT_FOLDER_ID } from '@/features/folders/constants';
 
 export interface BlogHandlerCtx {
   navigate: NavigateFunction;
@@ -52,6 +53,7 @@ export async function handleSaveBlogDraft(
       status: 'draft',
       source: 'direct',
       templateId: data.templateId,
+      folderId: ROOT_FOLDER_ID,
       contentText,
     });
 

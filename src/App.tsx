@@ -28,6 +28,7 @@ const PlanList = lazy(() => import('@/pages/plans/PlanList'));
 const PlanDetail = lazy(() => import('@/pages/plans/PlanDetail'));
 const PlanEdit = lazy(() => import('@/pages/plans/PlanEdit'));
 const BlogList = lazy(() => import('@/pages/blogs/BlogList'));
+const Folders = lazy(() => import('@/pages/Folders'));
 const BlogDetail = lazy(() => import('@/pages/blogs/BlogDetail'));
 const BlogEdit = lazy(() => import('@/pages/blogs/BlogEdit'));
 const Kanban = lazy(() => import('@/pages/Kanban'));
@@ -66,6 +67,7 @@ export default function App() {
           element={withSuspense(<PlanEdit mode="edit" />, '加载计划编辑器…')}
         />
         <Route path="/blogs" element={withSuspense(<BlogList />, '加载博客列表…')} />
+        <Route path="/folders" element={withSuspense(<Folders />, '加载文件夹…')} />
         <Route
           path="/blogs/new"
           element={withSuspense(<BlogEdit mode="create" />, '加载博客编辑器…')}

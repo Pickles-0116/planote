@@ -8,9 +8,10 @@ import {
   PenLine,
   FileText,
   Sparkles,
+  FolderTree,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import CollectionSidebar from './CollectionSidebar';
+import SidebarFolders from './SidebarFolders';
 
 interface NavItem {
   to: string;
@@ -24,6 +25,7 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/', label: '仪表盘', icon: <LayoutDashboard size={16} />, end: true },
   { to: '/plans', label: '计划', icon: <Target size={16} /> },
   { to: '/blogs', label: '博客', icon: <Newspaper size={16} /> },
+  { to: '/folders', label: '文件夹', icon: <FolderTree size={16} /> },
   { to: '/templates', label: '模板', icon: <FileText size={16} /> },
   { to: '/ai-chat', label: 'AI 对话', icon: <Sparkles size={16} /> },
   { to: '/kanban', label: '看板', icon: <Kanban size={16} /> },
@@ -67,9 +69,9 @@ export default function Sidebar() {
           </NavLink>
         ))}
 
-        {/* v1.4：收藏夹区块 */}
+        {/* V1.2：文件夹区块（与 /folders 页一致的数据源） */}
         <div className="pt-4 pb-1 border-t border-stone-100 dark:border-stone-700">
-          <CollectionSidebar />
+          <SidebarFolders />
         </div>
 
         {/* 其他 */}
@@ -84,15 +86,15 @@ export default function Sidebar() {
         </NavLink>
       </nav>
 
-      {/* 用户卡片 */}
+      {/* 用户卡片（默认 Planote 标识） */}
       <div className="m-3 p-3 rounded-2xl bg-gradient-to-br from-stone-100 to-stone-50 dark:from-stone-700 dark:to-stone-800 border border-stone-200 dark:border-stone-600">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-white text-xs font-bold">
-            梓
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-600 to-brand-800 flex items-center justify-center text-white text-xs font-bold">
+            P
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs font-semibold truncate text-brand-900 dark:text-stone-100">宋梓浩</div>
-            <div className="text-[10px] text-brand-400 dark:text-stone-500">Pro · 245 天</div>
+            <div className="text-xs font-semibold truncate text-brand-900 dark:text-stone-100">Planote</div>
+            <div className="text-[10px] text-brand-400 dark:text-stone-500">本地优先 · 个人版</div>
           </div>
         </div>
       </div>

@@ -8,13 +8,14 @@
  * 典型场景：10 篇 LeetCode 刷题博客 → 生成一篇周总结。
  */
 
-import { useState, useCallback } from 'react';
-import { Loader2, RefreshCw, ChevronDown, ChevronRight, BookOpen } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { RefreshCw, ChevronDown, ChevronRight, BookOpen } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import type { Blog, BlogTemplate } from '@/types/domain';
 import { useBlogs } from '@/stores';
 import { useTemplates } from '@/features/templates/hooks/useTemplates';
 import { useAIGenerate } from '../hooks/useAIGenerate';
+import AIStatusBar from './AIStatusBar';
 import { buildTemplatePrompt } from '../prompts';
 import type { ReferenceBlog } from '../prompts/templatePrompt';
 import { markdownToTiptapJSON } from '@/features/blog/utils/markdownToTiptap';
@@ -39,7 +40,14 @@ export default function TemplateGenerator({ editor, initialGlobalNotes }: Props)
   const [refBlogIds, setRefBlogIds] = useState<string[]>([]);
   const [refBlogExpanded, setRefBlogExpanded] = useState(false);
 
-  const { status, generatedText, errorMessage, generate } = useAIGenerate('template');
+  const { status, generatedText, errorMessage, generate, cancel } = useAIGenerate('template');
+
+  // 取消标记：停止后避免把不完整片段写入编辑器（V1.2 B10 统一防护）
+  const cancelledRef = useRef(false);
+  const handleCancel = useCallback(() => {
+    cancelledRef.current = true;
+    cancel();
+  }, [cancel]);
 
   const selectedTemplate = templates?.find((t) => t.id === selectedId);
   const hasAnyInput =
@@ -61,6 +69,7 @@ export default function TemplateGenerator({ editor, initialGlobalNotes }: Props)
 
   const handleGenerate = useCallback(async () => {
     if (!selectedTemplate) return;
+    cancelledRef.current = false;
 
     // 组装引用博客素材
     const referenceBlogs: ReferenceBlog[] | undefined =
@@ -82,6 +91,8 @@ export default function TemplateGenerator({ editor, initialGlobalNotes }: Props)
       { role: 'system', content: system },
       { role: 'user', content: user },
     ]);
+    // 取消后不写入编辑器：用户点停止时 cancelledRef 置 true，跳过 setContent
+    if (cancelledRef.current) return;
     if (md && editor) {
       const json = markdownToTiptapJSON(md);
       editor.commands.setContent(json as never);
@@ -237,13 +248,8 @@ export default function TemplateGenerator({ editor, initialGlobalNotes }: Props)
         />
       </div>
 
-      {/* 状态显示 */}
-      {status === 'generating' && (
-        <div className="flex items-center gap-2 text-sm text-brand-900 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 rounded-xl px-4 py-3">
-          <Loader2 size={16} className="animate-spin" />
-          正在生成博客…
-        </div>
-      )}
+      {/* V1.2 B10：共享生成状态条 + 停止按钮（复用既有 AIStatusBar / cancel） */}
+      <AIStatusBar status={status === 'generating' ? 'generating' : 'idle'} onCancel={handleCancel} />
 
       {status === 'error' && (
         <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3">

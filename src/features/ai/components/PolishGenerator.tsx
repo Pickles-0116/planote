@@ -4,10 +4,11 @@
  * 输入原始素材 → 选择风格/长度预设 → 一键润色为博客。
  */
 
-import { useState, useCallback } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { RefreshCw } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import { useAIGenerate } from '../hooks/useAIGenerate';
+import AIStatusBar from './AIStatusBar';
 import { buildPolishPrompt } from '../prompts';
 import type { PolishStyle, PolishLength } from '../prompts';
 import { markdownToTiptapJSON } from '@/features/blog/utils/markdownToTiptap';
@@ -37,11 +38,19 @@ export default function PolishGenerator({ editor }: Props): JSX.Element {
   const [style, setStyle] = useState<PolishStyle>('auto');
   const [length, setLength] = useState<PolishLength>('auto');
 
-  const { status, generatedText, errorMessage, generate } = useAIGenerate('polish');
+  const { status, generatedText, errorMessage, generate, cancel } = useAIGenerate('polish');
+
+  // 取消标记：停止后避免把不完整片段写入编辑器（V1.2 B10 统一防护）
+  const cancelledRef = useRef(false);
+  const handleCancel = useCallback(() => {
+    cancelledRef.current = true;
+    cancel();
+  }, [cancel]);
 
   const canGenerate = material.trim().length >= 50 && status !== 'generating';
 
   const handleGenerate = useCallback(async () => {
+    cancelledRef.current = false;
     const { system, user } = buildPolishPrompt({
       rawMaterial: material,
       style,
@@ -51,6 +60,8 @@ export default function PolishGenerator({ editor }: Props): JSX.Element {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ]);
+    // 取消后不写入编辑器：用户点停止时 cancelledRef 置 true，跳过 setContent
+    if (cancelledRef.current) return;
     if (md && editor) {
       const json = markdownToTiptapJSON(md);
       editor.commands.setContent(json as never);
@@ -124,13 +135,8 @@ export default function PolishGenerator({ editor }: Props): JSX.Element {
         </div>
       </div>
 
-      {/* 状态 */}
-      {status === 'generating' && (
-        <div className="flex items-center gap-2 text-sm text-brand-900 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 rounded-xl px-4 py-3">
-          <Loader2 size={16} className="animate-spin" />
-          正在润色生成…
-        </div>
-      )}
+      {/* V1.2 B10：共享生成状态条 + 停止按钮（复用既有 AIStatusBar / cancel） */}
+      <AIStatusBar status={status === 'generating' ? 'generating' : 'idle'} onCancel={handleCancel} />
       {status === 'error' && (
         <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3">
           <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>

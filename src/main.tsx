@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { db } from '@/db';
-import { seedIfNeeded } from '@/db/seed';
+import { seedIfNeeded, ensureFolders } from '@/db/seed';
+import { reconcileTags } from '@/db/reconcileTags';
 import { migrateAllToTemplates } from '@/features/templates/hooks/migratePresets';
 import { ErrorBoundary } from '@/components/shell/ErrorBoundary';
 import './styles/globals.css';
@@ -22,6 +23,14 @@ import './styles/globals.css';
  */
 seedIfNeeded(db).catch((err) => {
   console.error('[seed] failed to seed built-in frameworks:', err);
+});
+
+ensureFolders(db).catch((err) => {
+  console.error('[seed] failed to ensure folders:', err);
+});
+
+reconcileTags(db).catch((err) => {
+  console.error('[reconcile] tag reconciliation failed:', err);
 });
 
 migrateAllToTemplates().catch((err) => {

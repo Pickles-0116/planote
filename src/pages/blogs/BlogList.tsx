@@ -1,13 +1,25 @@
 /**
- * BlogList - 博客列表页（/blogs 路由）（add-blog-list-and-detail 增量）
+ * BlogList - 博客列表页（/blogs 路由）（add-blog-list-and-detail + V1.2 F4 增量）
  *
  * 顶层 hooks pipeline（design.md §2.1 共享数据流）：
  *   useBlogs()                       ← useLiveQuery 订阅
  *     ↓
  *   useFilteredBlogs(blogs, filters, sort)
- *     ├─ status → framework → tag(OR) → search → sort
+ *     ├─ status → framework → template → tag(OR) → source → wordCount → date → search → sort
  *     ↓
- *   [GridView | ListView]            ← 仅切渲染分支
+ *   [GridView | ListView | ByPlan]   ← 仅切渲染分支
+ *
+ * 2024-06 修正：恢复为「全部博客」视图。移除上一版误加的文件夹视图相关 UI：
+ *   - 顶栏文件夹筛选条（FolderFilterBar）
+ *   - 文件夹面包屑（Breadcrumb）
+ *   - 按文件夹分组（grouped）
+ *   - 右侧「管理文件夹」抽屉（Drawer + FolderTree）
+ *
+ * 现在 /blogs 只保留：搜索框（带命中高亮）、标签多维筛选、网格/列表/按计划 三种视图切换，
+ * 即一个干净的「看全部博客」列表页。收藏夹（collections）卡片与「去掉已收藏博客」逻辑
+ * 属于 v1.4-Organize 独立特性，与文件夹无关，予以保留。
+ *
+ * V1.2 B4：useFilteredBlogs 返回 BlogWithSnippet，命中片段经 `snippet` 传入 BlogCard。
  *
  * 视图切换：useUIStore.blogListView（持久化到 localStorage）
  *
@@ -27,10 +39,7 @@ import BlogListFilters from '@/features/blog/components/BlogListFilters';
 import BlogListToolbar from '@/features/blog/components/BlogListToolbar';
 import ImportMarkdownButton from '@/features/blog/components/ImportMarkdownButton';
 import BlogByPlanView from '@/features/blog/components/BlogByPlanView';
-import CollectionFolderCard from '@/features/blog/components/CollectionFolderCard';
-import { useCollectedBlogIds } from '@/features/blog/hooks/useCollectedBlogIds';
-import { useCollectionsWithBlogCount } from '@/features/blog/hooks/useCollectionsWithBlogCount';
-import { useFilteredBlogs } from '@/features/blog/hooks/useFilteredBlogs';
+import { useFilteredBlogs, type BlogWithSnippet } from '@/features/blog/hooks/useFilteredBlogs';
 import { useBlogs, useAllTemplates, useTags, useUIStore } from '@/stores';
 import type { BlogTemplate, BlogSource, ID } from '@/types/domain';
 import type { BlogFilters } from '@/features/blog/hooks/useFilteredBlogs';
@@ -58,8 +67,6 @@ export default function BlogList(): JSX.Element {
   const blogs = useBlogs();
   const templates = useAllTemplates();
   const tags = useTags();
-  const collectedBlogIds = useCollectedBlogIds();
-  const collectionsWithCount = useCollectionsWithBlogCount();
 
   // 模板名映射：templateId → BlogTemplate（O(1) 查找）
   const templateMap = useMemo(() => {
@@ -79,17 +86,12 @@ export default function BlogList(): JSX.Element {
     source,
     wordCountRange,
     dateRange,
+    // 全部博客视图：不过滤文件夹（folderId = null 表示「全部文件夹」）
+    folderId: null,
   };
 
   // 组合筛选 + 排序
   const filtered = useFilteredBlogs(blogs, filters, sort);
-
-  // 从筛选结果中去掉已加入收藏夹的博客（byPlan 视图不受影响）
-  const uncollectedBlogs = useMemo(() => {
-    if (!filtered) return filtered;
-    if (!collectedBlogIds || collectedBlogIds.size === 0) return filtered;
-    return filtered.filter((b) => !collectedBlogIds.has(b.id));
-  }, [filtered, collectedBlogIds]);
 
   const hasFilters: boolean = useMemo(
     () =>
@@ -118,6 +120,40 @@ export default function BlogList(): JSX.Element {
     setWordCountRange(null);
     setDateRange(null);
   }, [setStatusFilter]);
+
+  const renderBlogs = useCallback(
+    (list: BlogWithSnippet[]): JSX.Element => {
+      if (view === 'grid') {
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-view="grid">
+            {list.map((b) => (
+              <BlogCard
+                key={b.id}
+                blog={b}
+                density="grid"
+                framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
+                snippet={b.searchSnippet}
+              />
+            ))}
+          </div>
+        );
+      }
+      return (
+        <div className="space-y-2" data-view="list">
+          {list.map((b) => (
+            <BlogCard
+              key={b.id}
+              blog={b}
+              density="list"
+              framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
+              snippet={b.searchSnippet}
+            />
+          ))}
+        </div>
+      );
+    },
+    [view, templateMap],
+  );
 
   // 加载态
   if (blogs === undefined) {
@@ -159,7 +195,7 @@ export default function BlogList(): JSX.Element {
   }
 
   // 筛选无结果（但收藏夹仍展示）
-  if (uncollectedBlogs !== undefined && uncollectedBlogs.length === 0 && view !== 'byPlan') {
+  if (filtered !== undefined && filtered.length === 0 && view !== 'byPlan') {
     return (
       <div className="space-y-6">
         <PageHeader count={blogs.length}>
@@ -172,6 +208,7 @@ export default function BlogList(): JSX.Element {
             新建博客
           </button>
         </PageHeader>
+
         <BlogListFilters
           query={query}
           onQueryChange={setQuery}
@@ -199,26 +236,15 @@ export default function BlogList(): JSX.Element {
           onSortChange={setSort}
         />
 
-        {/* 收藏夹入口卡片（即使无未收藏博客也展示） */}
-        {collectionsWithCount && collectionsWithCount.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fadeUp">
-            {collectionsWithCount.map(({ collection, blogCount }) => (
-              <CollectionFolderCard
-                key={collection.id}
-                collection={collection}
-                blogCount={blogCount}
-              />
-            ))}
-          </div>
-        )}
-
         <EmptyState
           icon={SearchX}
-          title={hasFilters ? '没找到匹配的博客' : '所有博客都已收藏'}
+          title={hasFilters ? '没找到匹配的博客' : '还没有博客'}
           description={
             hasFilters
-              ? (query ? `没有博客包含「${query}」` : '当前筛选条件下无博客')
-              : '点击上方文件夹查看收藏的博客'
+              ? query
+                ? `没有博客包含「${query}」`
+                : '当前筛选条件下无博客'
+              : '当前还没有任何博客，点击右上角「新建博客」开始记录'
           }
           action={hasFilters ? {
             label: '清除筛选',
@@ -243,6 +269,7 @@ export default function BlogList(): JSX.Element {
           新建博客
         </button>
       </PageHeader>
+
       <BlogListFilters
         query={query}
         onQueryChange={setQuery}
@@ -270,49 +297,12 @@ export default function BlogList(): JSX.Element {
         onSortChange={setSort}
       />
 
-      {/* 收藏夹入口卡片（grid/list 视图，有收藏夹时展示） */}
-      {view !== 'byPlan' && collectionsWithCount && collectionsWithCount.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fadeUp">
-          {collectionsWithCount.map(({ collection, blogCount }) => (
-            <CollectionFolderCard
-              key={collection.id}
-              collection={collection}
-              blogCount={blogCount}
-            />
-          ))}
-        </div>
-      )}
+      {/* byPlan 视图：独立渲染 */}
+      {filtered && view === 'byPlan' && <BlogByPlanView blogs={filtered} />}
 
-      {uncollectedBlogs && view === 'grid' && (
-        <div
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-          data-view="grid"
-        >
-          {uncollectedBlogs.map((b) => (
-            <BlogCard
-              key={b.id}
-              blog={b}
-              density="grid"
-              framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
-            />
-          ))}
-        </div>
-      )}
-      {uncollectedBlogs && view === 'list' && (
-        <div className="space-y-2" data-view="list">
-          {uncollectedBlogs.map((b) => (
-            <BlogCard
-              key={b.id}
-              blog={b}
-              density="list"
-              framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
-            />
-          ))}
-        </div>
-      )}
-      {filtered && view === 'byPlan' && (
-        <BlogByPlanView blogs={filtered} />
-      )}
+      {/* 网格 / 列表视图：扁平渲染全部博客（按文件夹分组已移除） */}
+      {!filtered && view !== 'byPlan' && <Skeleton className="h-44" />}
+      {filtered && view !== 'byPlan' && renderBlogs(filtered)}
     </div>
   );
 }

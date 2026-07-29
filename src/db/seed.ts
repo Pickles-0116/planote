@@ -9,6 +9,7 @@
 
 import type { Framework } from '@/types/domain';
 import type { PlanoteDB } from './schema';
+import { ROOT_FOLDER_ID, ROOT_FOLDER_NAME } from '@/features/folders/constants';
 
 // ========== 4 套内置框架 ==========
 
@@ -188,5 +189,50 @@ export async function seedIfNeeded(db: PlanoteDB): Promise<void> {
   await db.transaction('rw', db.frameworks, db.meta, async () => {
     await db.frameworks.bulkPut(BUILTIN_FRAMEWORKS);
     await db.meta.put({ key: 'seeded', value: true });
+  });
+}
+
+/**
+ * 幂等确保文件夹基础设施就绪（V1.2 F1）。
+ *
+ * 1. 若不存在根文件夹（「未分类」），创建之。
+ * 2. 回填历史博客缺失的 `folderId` → 统一指向 ROOT_FOLDER_ID
+ *    （保证 `Blog.folderId` 永不为 null）。
+ * 3. 重算根文件夹 blogCount 缓存。
+ *
+ * 与 `seedIfNeeded` 同样 fire-and-forget、可重复调用。
+ */
+export async function ensureFolders(db: PlanoteDB): Promise<void> {
+  await db.transaction('rw', db.folders, db.blogs, async () => {
+    const root = await db.folders.get(ROOT_FOLDER_ID);
+    if (!root) {
+      const now = new Date().toISOString();
+      await db.folders.put({
+        id: ROOT_FOLDER_ID,
+        name: ROOT_FOLDER_NAME,
+        type: 'root',
+        parentId: '',
+        depth: 0,
+        order: 0,
+        blogCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    // 回填缺失 folderId 的历史博客
+    // 用 put 而非 update：规避 Dexie UpdateSpec 对递归 TiptapJSON 的 TS2615
+    const allBlogs = await db.blogs.toArray();
+    for (const b of allBlogs) {
+      if (!b.folderId) {
+        await db.blogs.put({ ...b, folderId: ROOT_FOLDER_ID });
+      }
+    }
+
+    // 重算根目录缓存（含回填后的全部未分类博客）
+    const rootCount = allBlogs.filter(
+      (b) => (b.folderId ?? ROOT_FOLDER_ID) === ROOT_FOLDER_ID,
+    ).length;
+    await db.folders.update(ROOT_FOLDER_ID, { blogCount: rootCount });
   });
 }

@@ -36,6 +36,9 @@ import { extractPlainText } from '@/features/blog/utils/extractPlainText';
 import { useAttachmentStore, useBlog, useTemplates, useBlogStore, useUIStore, usePlan, useItemsForPlan } from '@/stores';
 import type { Blog, BlogStatus, Framework, FrameworkCategory, TiptapJSON } from '@/types/domain';
 import { cn } from '@/lib/utils';
+import { ROOT_FOLDER_ID } from '@/features/folders/constants';
+import { useFolders } from '@/features/folders/hooks/useFolders';
+import FolderPicker from '@/features/folders/components/FolderPicker';
 import FrameworkDrawerHost from '@/features/framework/components/FrameworkDrawerHost';
 import { type PresetFramework } from '@/features/framework/data/presets';
 import AIWritingPanel from '@/features/ai/components/AIWritingPanel';
@@ -66,6 +69,7 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
   // edit 模式订阅单 blog
   const blog = useBlog(mode === 'edit' ? (id ?? null) : null);
   const templates = useTemplates();
+  const folders = useFolders();
 
   // create 模式：从 URL 参数读取预填值（从计划生成博客场景）
   const queryTemplateId = mode === 'create' ? (searchParams.get('templateId') ?? searchParams.get('frameworkId') ?? '') : '';
@@ -95,12 +99,14 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
   const initialTemplateId = blog?.templateId ?? blog?.frameworkId ?? queryTemplateId;
   const initialStatus = (blog?.status ?? 'draft') as BlogStatus;
   const initialTags = (blog?.tagIds ?? []).join(',');
+  const initialFolderId = blog?.folderId ?? ROOT_FOLDER_ID;
   const initialContent = contentToString(blog?.content);
 
   const [title, setTitle] = useState(initialTitle);
   const [templateId, setTemplateId] = useState<string>(initialTemplateId);
   const [status, setStatus] = useState<BlogStatus>(initialStatus);
   const [tagsInput, setTagsInput] = useState(initialTags);
+  const [folderId, setFolderId] = useState<string>(initialFolderId);
   const [editor, setEditor] = useState<Editor | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -161,9 +167,10 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
       title !== initialTitle ||
       templateId !== initialTemplateId ||
       status !== initialStatus ||
-      tagsInput !== initialTags
+      tagsInput !== initialTags ||
+      folderId !== initialFolderId
     );
-  }, [mode, title, templateId, status, tagsInput, editor, initialTitle, initialTemplateId, initialStatus, initialTags]);
+  }, [mode, title, templateId, status, tagsInput, folderId, editor, initialTitle, initialTemplateId, initialStatus, initialTags, initialFolderId]);
 
   // 离开保护：浏览器关闭/刷新时弹出确认
   useEffect(() => {
@@ -191,6 +198,7 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
         status,
         templateId: templateId || undefined,
         tagIds,
+        folderId,
       }).catch((e: unknown) => {
         console.error('[BlogEdit] auto save failed:', e);
       });
@@ -306,6 +314,7 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
           source: 'direct',
           templateId: templateId || undefined,
           tagIds,
+          folderId,
           sourcePlanId: sourcePlanId || undefined,
           attachmentIds: [],
         });
@@ -416,8 +425,8 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
         />
       </div>
 
-      {/* 元数据：模板 / 状态 / 标签 */}
-      <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+      {/* 元数据：模板 / 状态 / 标签 / 文件夹 */}
+      <div className="mb-4 grid grid-cols-1 md:grid-cols-4 gap-3">
         <div>
           <label
             htmlFor="blog-template"
@@ -475,6 +484,22 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
             onChange={(e) => setTagsInput(e.target.value)}
             placeholder="如：复盘, 21天"
             className="w-full px-3 py-2 text-sm bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-600 rounded-xl focus:border-brand-500 focus:outline-none text-brand-900 dark:text-stone-100"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="blog-folder"
+            className="block text-xs font-medium text-brand-500 dark:text-stone-400 mb-1.5"
+          >
+            文件夹
+          </label>
+          <FolderPicker
+            id="blog-folder"
+            value={folderId}
+            onChange={setFolderId}
+            folders={folders ?? []}
+            className="w-full"
           />
         </div>
       </div>

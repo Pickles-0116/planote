@@ -6,12 +6,13 @@
  * 2. 基于风格 + 新主题/素材生成博客
  */
 
-import { useState, useCallback } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { RefreshCw } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import { useBlogs } from '@/stores';
 import { useTemplates } from '@/features/templates/hooks/useTemplates';
 import { useAIGenerate } from '../hooks/useAIGenerate';
+import AIStatusBar from './AIStatusBar';
 import { buildStyleAnalysisPrompt, buildImitatePrompt } from '../prompts';
 import { markdownToTiptapJSON } from '@/features/blog/utils/markdownToTiptap';
 import { cn } from '@/lib/utils';
@@ -33,7 +34,14 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
   const [phase, setPhase] = useState<Phase>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const { generate } = useAIGenerate('imitate');
+  const { generate, cancel } = useAIGenerate('imitate');
+
+  // 取消标记：步骤式生成（分析 → 仿写）中，避免 cancel 后继续下一步（V1.2 B10）
+  const cancelledRef = useRef(false);
+  const handleCancel = useCallback(() => {
+    cancelledRef.current = true;
+    cancel();
+  }, [cancel]);
 
   const toggleBlog = useCallback((id: string) => {
     setSelectedBlogIds((prev) => {
@@ -52,6 +60,7 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
 
   const handleGenerate = useCallback(async () => {
     if (!canGenerate || !blogs) return;
+    cancelledRef.current = false;
 
     try {
       // Step 1: 风格分析
@@ -66,6 +75,11 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
         { role: 'system', content: analysis.system },
         { role: 'user', content: analysis.user },
       ]);
+      // 取消后不再进入下一步（V1.2 B10）
+      if (cancelledRef.current) {
+        setPhase('idle');
+        return;
+      }
       if (!styleJson) {
         setPhase('error');
         setErrorMsg('风格分析失败，请重试');
@@ -85,6 +99,11 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
         { role: 'system', content: imitate.system },
         { role: 'user', content: imitate.user },
       ]);
+      // 取消后不写入编辑器（V1.2 B10）
+      if (cancelledRef.current) {
+        setPhase('idle');
+        return;
+      }
 
       if (md && editor) {
         const json = markdownToTiptapJSON(md);
@@ -176,13 +195,11 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
         </select>
       </div>
 
-      {/* 状态 */}
-      {(phase === 'analyzing' || phase === 'generating') && (
-        <div className="flex items-center gap-2 text-sm text-brand-900 dark:text-brand-400 bg-brand-50 dark:bg-brand-900/20 rounded-xl px-4 py-3">
-          <Loader2 size={16} className="animate-spin" />
-          {phase === 'analyzing' ? '正在分析写作风格…' : '正在仿写生成…'}
-        </div>
-      )}
+      {/* V1.2 B10：共享生成状态条 + 停止按钮（复用既有 AIStatusBar / cancel） */}
+      <AIStatusBar
+        status={phase === 'analyzing' || phase === 'generating' ? 'generating' : 'idle'}
+        onCancel={handleCancel}
+      />
       {phase === 'error' && (
         <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3">
           <p className="text-sm text-red-600 dark:text-red-400">{errorMsg}</p>

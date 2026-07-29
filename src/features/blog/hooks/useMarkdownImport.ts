@@ -26,6 +26,7 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBlogStore, useToastStore } from '@/stores';
+import { ROOT_FOLDER_ID } from '@/features/folders/constants';
 import { extractPlainText } from '@/features/blog/utils/extractPlainText';
 import {
   markdownToTiptapJSON,
@@ -158,6 +159,7 @@ const parseAndCreate = async (
       tagIds: [],
       attachmentIds: [],
       source: 'direct',
+      folderId: ROOT_FOLDER_ID,
     });
     return { blogId: blog.id, title };
   } catch (e) {

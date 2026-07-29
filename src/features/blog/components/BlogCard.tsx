@@ -17,9 +17,8 @@ import { useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Calendar, Copy, FileText, Hash } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import AddToCollectionButton from '@/components/shared/AddToCollectionButton';
 import { useBlogStore, useToastStore } from '@/stores';
-import type { Blog, BlogStatus, BlogTemplate, Framework } from '@/types/domain';
+import type { Blog, BlogTemplate, Framework } from '@/types/domain';
 import { formatRelativeTime } from '../utils/formatRelativeTime';
 
 export type BlogCardDensity = 'grid' | 'list';
@@ -29,34 +28,11 @@ interface Props {
   density?: BlogCardDensity;
   /** 模板 / 框架名映射（避免每次 find） */
   framework?: BlogTemplate | Framework | undefined;
+  /** V1.2 B4：全文检索命中片段（优先于 excerpt 展示）。 */
+  snippet?: string;
 }
 
-const STATUS_LABEL: Record<BlogStatus, string> = {
-  draft: '草稿',
-  published: '已发布',
-  archived: '已归档',
-};
-
-const STATUS_CLS: Record<BlogStatus, string> = {
-  draft: 'text-stone-600 bg-stone-100',
-  published: 'text-emerald-700 bg-emerald-50',
-  archived: 'text-amber-700 bg-amber-50',
-};
-
-function StatusBadge({ status }: { status: BlogStatus }): JSX.Element {
-  return (
-    <span
-      className={cn(
-        'text-[10px] font-semibold px-2 py-0.5 rounded flex-shrink-0',
-        STATUS_CLS[status],
-      )}
-    >
-      {STATUS_LABEL[status]}
-    </span>
-  );
-}
-
-export default function BlogCard({ blog, density = 'grid', framework }: Props) {
+export default function BlogCard({ blog, density = 'grid', framework, snippet }: Props) {
   const navigate = useNavigate();
   const duplicateBlog = useBlogStore((s) => s.duplicateBlog);
   const pushToast = useToastStore((s) => s.push);
@@ -92,7 +68,6 @@ export default function BlogCard({ blog, density = 'grid', framework }: Props) {
         <h3 className="text-sm font-semibold text-brand-900 truncate flex-1 min-w-0 group-hover:text-brand-700">
           {blog.title}
         </h3>
-        <StatusBadge status={blog.status} />
         {framework && (
           <span className="text-[10px] text-brand-500 font-medium bg-stone-100 px-1.5 py-0.5 rounded flex-shrink-0">
             {framework.name}
@@ -117,18 +92,17 @@ export default function BlogCard({ blog, density = 'grid', framework }: Props) {
       )}
     >
       <article className="space-y-3">
-        {/* 标题 + 状态 badge */}
+        {/* 标题 */}
         <div className="flex items-start justify-between gap-2">
           <h3 className="text-base font-bold text-brand-900 line-clamp-2 flex-1 min-w-0 group-hover:text-brand-700">
             {blog.title}
           </h3>
-          <StatusBadge status={blog.status} />
         </div>
 
-        {/* 摘要（line-clamp-2） */}
-        {blog.excerpt && (
+        {/* 摘要 / 检索命中片段（line-clamp-2） */}
+        {(snippet || blog.excerpt) && (
           <p className="text-xs text-brand-500 line-clamp-2 leading-relaxed">
-            {blog.excerpt}
+            {snippet || blog.excerpt}
           </p>
         )}
 
@@ -162,9 +136,6 @@ export default function BlogCard({ blog, density = 'grid', framework }: Props) {
             <span className="text-brand-300">未选框架</span>
           )}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span onClick={(e) => e.preventDefault()}>
-              <AddToCollectionButton entityType="blog" entityId={blog.id} />
-            </span>
             <button
               type="button"
               onClick={handleDuplicate}

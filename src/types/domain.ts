@@ -271,6 +271,11 @@ export interface Blog {
   /** 从哪个计划生成（直接创作时为 undefined）。 */
   sourcePlanId?: ID;
   /**
+   * 所属文件夹 ID（V1.2 F1）。
+   * 永不为 null；缺省为 `ROOT_FOLDER_ID`（「未分类」）。
+   */
+  folderId: string;
+  /**
    * @deprecated v1.4-Unify：统一使用 `templateId`。
    * 保留读取兼容（fallback），新写入不再使用。
    */
@@ -312,6 +317,38 @@ export interface CollectionItem {
   entityType: CollectionEntityType;
   entityId: ID;
   addedAt: ISODate;
+}
+
+// ========== 文件夹（v1.2 F1） ==========
+
+/** 文件夹类型：根 / 主文件夹 / 日期子文件夹。 */
+export type FolderType = 'root' | 'main' | 'date';
+
+/**
+ * 文件夹实体（V1.2 新增，用于组织博客）。
+ *
+ * 树结构（深度上限 2）：
+ *   root（未分类） → 主文件夹 → 日期子文件夹
+ *
+ * - `parentId`：父文件夹 ID。root 的 parentId 为空字符串 `''`。
+ * - `depth`：0=root / 1=主 / 2=日期。
+ * - `blogCount`：缓存值，由 `FolderRepo.bumpBlogCount` 在博客增删/移动时维护。
+ */
+export interface Folder {
+  id: ID;
+  /** 显示名（root 固定为「未分类」）。 */
+  name: string;
+  type: FolderType;
+  /** 父文件夹 ID；root 为 `''`。 */
+  parentId: ID;
+  /** 树深度（0/1/2）。 */
+  depth: number;
+  /** 同父级下排序序号。 */
+  order: number;
+  /** 缓存的博客数量（含子孙目录的博客）。 */
+  blogCount: number;
+  createdAt: ISODate;
+  updatedAt: ISODate;
 }
 
 // ========== AI 对话助手（v1.5-AI Chat） ==========

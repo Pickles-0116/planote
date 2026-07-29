@@ -30,8 +30,11 @@ import {
   type KanbanColumnKey,
 } from '@/features/kanban';
 import KanbanColumn from '@/features/kanban/components/KanbanColumn';
+import EntityFilterBar from '@/features/filters/components/EntityFilterBar';
 import { cn } from '@/lib/utils';
 import type { ID, Item, ItemStatus, Plan } from '@/types/domain';
+import { useTags } from '@/stores';
+import { useEntityFilters, applyEntityFilters, type EntityFilterable } from '@/features/filters/useEntityFilters';
 
 /** 4 列虚拟键 → 实际 ItemStatus 映射（blocked 是 todo 的派生子集）。 */
 const COLUMN_TO_STATUS: Record<KanbanColumnKey, ItemStatus> = {
@@ -43,6 +46,14 @@ const COLUMN_TO_STATUS: Record<KanbanColumnKey, ItemStatus> = {
 
 function toItemStatus(key: KanbanColumnKey): ItemStatus {
   return COLUMN_TO_STATUS[key];
+}
+
+/**
+ * 看板筛选中间结构：事项本身不含 tagIds / level / timeDim，
+ * 这些维度取自其所属计划，故构建 wrapper 供 `applyEntityFilters` 使用（V1.2 B5）。
+ */
+interface KanbanFilterable extends EntityFilterable {
+  item: Item;
 }
 
 function KanbanSkeleton(): JSX.Element {
@@ -76,6 +87,9 @@ interface PageHeaderProps {
   filterPlanId: ID | 'all';
   plans: Plan[];
   onFilterChange: (id: ID | 'all') => void;
+  filterOpen: boolean;
+  onToggleFilter: () => void;
+  hasActiveFilters: boolean;
 }
 
 function PageHeader({
@@ -83,6 +97,9 @@ function PageHeader({
   filterPlanId,
   plans,
   onFilterChange,
+  filterOpen,
+  onToggleFilter,
+  hasActiveFilters,
 }: PageHeaderProps): JSX.Element {
   const navigate = useNavigate();
   return (
@@ -94,6 +111,21 @@ function PageHeader({
         </span>
       </div>
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleFilter}
+          className={`relative p-2 rounded-xl border transition ${
+            filterOpen || hasActiveFilters
+              ? 'bg-brand-900 text-white border-brand-900'
+              : 'bg-white dark:bg-stone-800 text-brand-500 border-stone-200 dark:border-stone-600 hover:bg-stone-50 dark:hover:bg-stone-700'
+          }`}
+          title="多维筛选"
+        >
+          <Filter size={16} />
+          {hasActiveFilters && !filterOpen && (
+            <span className="absolute -top-1 -right-1 w-2 h-2 bg-amber-500 rounded-full" />
+          )}
+        </button>
         <div className="relative">
           <Filter
             size={12}
@@ -133,6 +165,9 @@ export default function Kanban(): JSX.Element {
   const navigate = useNavigate();
   const pushToast = useToastStore((s) => s.push);
   const [filterPlanId, setFilterPlanId] = useState<ID | 'all'>('all');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const tags = useTags();
+  const { filters, setFilters, hasActiveFilters } = useEntityFilters<Plan>();
   const {
     itemsById,
     itemsByStatus,
@@ -169,16 +204,43 @@ export default function Kanban(): JSX.Element {
     handleDragLeave,
   } = useDragDrop();
 
-  // 按 plan 过滤（必须在所有 early return 之前调用 hook）
+  // 按 plan 过滤 + 多维筛选（状态 / 时间维度 / 层级 / 标签，取自所属计划）（V1.2 B5）
   const filtered = useMemo<Record<KanbanColumnKey, Item[]>>(() => {
-    if (filterPlanId === 'all') return itemsByStatus;
+    const base: Record<KanbanColumnKey, Item[]> =
+      filterPlanId === 'all'
+        ? itemsByStatus
+        : {
+            todo: itemsByStatus.todo.filter((i) => i.planId === filterPlanId),
+            doing: itemsByStatus.doing.filter((i) => i.planId === filterPlanId),
+            blocked: itemsByStatus.blocked.filter((i) => i.planId === filterPlanId),
+            done: itemsByStatus.done.filter((i) => i.planId === filterPlanId),
+          };
+    if (!hasActiveFilters) return base;
+
+    const all = [...base.todo, ...base.doing, ...base.blocked, ...base.done];
+    const wrappers: KanbanFilterable[] = all.map((it) => {
+      const plan = plansById.get(it.planId);
+      return {
+        tagIds: plan?.tagIds ?? [],
+        status: it.status,
+        timeDim: plan?.timeDim,
+        level: plan?.level,
+        item: it,
+      };
+    });
+    const applied = applyEntityFilters(wrappers, filters);
+    const keep = new Set(applied.map((w) => w.item.id));
+    const pick = (arr: Item[]): Item[] => arr.filter((i) => keep.has(i.id));
     return {
-      todo: itemsByStatus.todo.filter((i) => i.planId === filterPlanId),
-      doing: itemsByStatus.doing.filter((i) => i.planId === filterPlanId),
-      blocked: itemsByStatus.blocked.filter((i) => i.planId === filterPlanId),
-      done: itemsByStatus.done.filter((i) => i.planId === filterPlanId),
+      todo: pick(base.todo),
+      doing: pick(base.doing),
+      blocked: pick(base.blocked),
+      done: pick(base.done),
     };
-  }, [filterPlanId, itemsByStatus]);
+  }, [filterPlanId, itemsByStatus, hasActiveFilters, filters, plansById]);
+
+  const matchCount =
+    filtered.todo.length + filtered.doing.length + filtered.blocked.length + filtered.done.length;
 
   // 加载中
   if (isLoading) {
@@ -194,6 +256,9 @@ export default function Kanban(): JSX.Element {
           filterPlanId={filterPlanId}
           plans={activePlans}
           onFilterChange={setFilterPlanId}
+          filterOpen={filterOpen}
+          onToggleFilter={() => setFilterOpen((v) => !v)}
+          hasActiveFilters={hasActiveFilters}
         />
         <EmptyState
           icon={Columns}
@@ -217,7 +282,22 @@ export default function Kanban(): JSX.Element {
         filterPlanId={filterPlanId}
         plans={activePlans}
         onFilterChange={setFilterPlanId}
+        filterOpen={filterOpen}
+        onToggleFilter={() => setFilterOpen((v) => !v)}
+        hasActiveFilters={hasActiveFilters}
       />
+      {filterOpen && (
+        <EntityFilterBar
+          filters={filters}
+          onChange={setFilters}
+          tags={tags ?? []}
+          matchCount={matchCount}
+          showStatus={false}
+          showLevel
+          showTimeDim
+          showDate={false}
+        />
+      )}
       <div className="flex gap-4 overflow-x-auto pb-4">
         {KANBAN_COLUMNS.map((col) => (
           <KanbanColumn

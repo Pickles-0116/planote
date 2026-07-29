@@ -17,6 +17,7 @@ import type {
 } from './types';
 import { AppError } from './types';
 import { newId } from '@/lib/id';
+import { ROOT_FOLDER_ID } from '@/features/folders/constants';
 import type { PlanoteDB } from '../schema';
 
 const nowISO = (): ISODate => new Date().toISOString();
@@ -126,6 +127,8 @@ export class BlogRepo implements BlogRepository {
       // 默认值
       tagIds: input.tagIds ?? [],
       attachmentIds: input.attachmentIds ?? [],
+      // folderId 永不为 null，缺省指向根文件夹（未分类）
+      folderId: input.folderId ?? ROOT_FOLDER_ID,
       contentText,
       // publishedAt 仅当 status === 'published' 时填
       publishedAt: input.status === 'published' ? now : undefined,

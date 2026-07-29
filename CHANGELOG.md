@@ -1,92 +1,54 @@
 # Changelog
 
-All notable changes to Planote will be documented in this file.
+All notable changes to Planote（栖记）are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.0.0] - 2026-07-19
+## [1.2.0] - 2025-xx-xx
 
-🎉 **v1.0 收官（核心可用版）** —— 跑通"创建计划 → 勾选完成 → 生成博客 → 发布"主流程。
+### 新增 (Added)
 
-### Added
+- **文件夹体系（F1/F2/F3/F4）**
+  - 新增 `folders` 数据表与 `Folder` 领域模型（深度 ≤ 2：root → main → date），支持文件夹树、面包屑路径计算。
+  - 全部博客页（`/blogs`）升级为文件夹视图：文件夹筛选下拉、breadcrumb 上钻、按文件夹分组、侧边「管理文件夹」抽屉（新建/重命名/删除/拖拽 reparent）。
+  - 博客编辑页新增「所属文件夹」选择器，支持归入任意文件夹；删除文件夹时对子目录与博客做 re-parent（上移一层 / 归入「未分类」），并二次确认，禁止静默丢失数据。
+  - 文件夹博客计数（`blogCount`）由 `FolderRepo.bumpBlogCount` 在博客增删/移动时维护。
 
-**仪表盘与全局**
-- 仪表盘：4 个关键数字（本月完成率 / 进行中计划 / 累计完成事项 / 已发布博客）+ 今日聚焦 + 即将到期 + 最近博客 + 活动流（liveQuery 接入真实数据）
-- 全局布局：左侧栏 + 顶栏 + 9 路由 Outlet，主题/主色/字号切换（dark / 浅色 / 护眼）
-- 键盘快捷键：`Cmd/Ctrl + N` 新建计划，`Cmd/Ctrl + B` 新建博客，`Cmd/Ctrl + K` 全局搜索，`Cmd/Ctrl + S` 保存，`Cmd/Ctrl + \` 折叠侧边栏
-- 设置中心：主题 + 主色 + 字号 + 标签管理 + 数据导入 / 导出 / 清除
+- **全文检索（B4）**
+  - 新增零依赖 `BlogSearchService`（加权子串 / 词频），对标题、标签、正文纯文本（contentText）做本地全文检索。
+  - 全部博客页检索结果自动高亮命中的 `searchSnippet`，并纳入 contentText 命中。
 
-**计划模块**
-- 计划 CRUD：3 步骤表单（基础信息 / 类型与维度 / 拆解事项），支持短 / 中 / 长期 × 每日 / 每月 / 每年 / 一次性
-- 计划详情：SVG 进度环 + 进度条 + 百分比 + 计数（5+ UI 元素联动）
-- 事项管理：增删改、勾选自动联动进度、@dnd-kit 拖拽排序（限 50 项）
-- 100% 完成金色 shimmer 横幅 + "生成总结博客" CTA
-- 计划列表三种视图模式：分组（默认，每组前 5 + 折叠）/ 全部（紧凑横排 + 分页）/ 表格（TanStack Table + 多选 + 批量操作）
-- 计划智能排序：🔴 今天截止 → 🟠 1-3 天 → 🟡 4-7 天 → 进度从高到低
-- 全局实时搜索 + 删除二次确认
+- **标签等多维筛选统一（B5）**
+  - 新增 `useEntityFilters` 统一筛选 hook 与 `EntityFilterBar` 复用筛选条（状态/时间维度/层级/标签/日期）。
+  - 计划列表（`/plans`）接入标签等多维筛选；看板（`/kanban`）接入统一多维筛选（标签/层级/时间维度），并由所属 plan 派生维度。
 
-**博客模块**
-- Tiptap v2 富文本编辑器：三栏布局（标题 / 工具栏 / 正文）+ 右侧发布设置 + 自动保存（5s debounce + 状态指示器）
-- 工具栏 9 个格式按钮 + "使用框架"高亮按钮（amber 色）
-- 框架抽屉：4 套内置框架（项目复盘 / 21 天习惯复盘 / 读书笔记 / 月度总结），分类 Tab + 卡片 + 预览 + 一键应用，Esc / 背景点击 / 背景滑动均可关闭
-- 应用框架：把章节结构 + 引导问题注入编辑器，预填计划数据
-- 附件上传：图片（PNG / JPG / GIF）+ Markdown / TXT 解析入正文，Blob 存 IndexedDB
-- 博客列表：卡片网格 + 状态 Tab（全部 / 草稿 / 已发布 / 归档）+ 标签云 + 分页
-- 博客详情：阅读模式 + 来源计划绿色提示条 + 附件下载
-- 关联计划选择器（搜索 + 多选）+ 网络搜索面板 UI 占位
+- **AI 停止按钮与状态条（B10）**
+  - 新增共享 `AIStatusBar` 组件，在润色 / 模板 / 仿写三个 AI 生成器中展示生成状态并提供「停止」按钮（调用 `useAIGenerate().cancel()`）；三个生成器统一以 `cancelledRef` 防护，取消后均跳过 `editor.commands.setContent`，避免把不完整片段注入编辑器。
 
-**看板与集成**
-- 看板：4 列状态视图（未开始 / 进行中 / 已完成 / 已搁置）+ 5 维时间过滤（今日 / 本周 / 本月 / 本年 / 全部）+ 类型 / 层级 / 标签筛选 + 卡片状态切换
-- 数据导入 / 导出 / 清除：JSON 格式全量备份 + 合并导入 + 二次确认
-- 关于页：版本号、技术栈、致谢
-- 撤销 / 重做栈（最近 20 步）
+### 变更 (Changed)
 
-### Tech Stack
+- 版本号由 `0.1.0` 提升至 `1.2.0`。
+- Dexie schema 升至 `version(5)`，增量补齐 `folders` 表与 `blogs.folderId` 字段（每个 version 完整重声明全部表）。
+- 启动初始化链补充 `ensureFolders()`（保证 root 存在）与 `reconcileTags()`（一次性标签修复）。
 
-| 维度 | 选型 | 版本 |
-|------|------|------|
-| 框架 | React | 18.3+ |
-| 语言 | TypeScript | 5.6+（strict） |
-| 构建 | Vite | 5.4+ |
-| 样式 | Tailwind CSS | 3.4+（CSS 变量驱动主题） |
-| 状态 | Zustand | 5.0+（含 persist 中间件） |
-| 数据 | Dexie + IndexedDB | 4.4+ |
-| 路由 | React Router | 6.26+（data router） |
-| 编辑器 | Tiptap | 2.6+（基于 ProseMirror） |
-| 表格 | TanStack Table | 8.x |
-| 拖拽 | @dnd-kit | 6.x |
-| 虚拟列表 | react-virtuoso | 4.x |
-| 图标 | Lucide React | latest |
-| ID | ULID | 3.x |
+### 已核对 / 已完成 (Verified / Done)
 
-### OpenSpec
+- **A3 归档 OpenSpec changes**：将原 6 个活跃 `ai-chat-*` 变更（ai-chat-core-ui、ai-chat-create-content、ai-chat-foundation、ai-chat-intent-routing、ai-chat-smart-qa、ai-chat-telemetry-polish）整体移动至 `openspec/changes/archive/`（目录名与内容保持完整）。`changes/` 下仅余 `ai-config-improvements` 待后续处理。
 
-v1.0 通过 OpenSpec 流程闭环，**14 个 change 全部归档**：
+### 备注 (Notes)
 
-| # | Change | 归档目录 | 关联 spec |
-|---|--------|---------|-----------|
-| 1 | add-data-layer-dexie | `archive/2026-07-19-add-data-layer-dexie/` | `plan-data` |
-| 2 | add-zustand-stores | `archive/2026-07-19-add-zustand-stores/` | `ui-state` |
-| 3 | add-app-shell | `archive/2026-07-19-add-app-shell/` | `ui-shell` |
-| 4 | add-data-binding-dashboard | `archive/2026-07-19-add-data-binding-dashboard/` | `dashboard-data` |
-| 5 | add-plan-edit-form | `archive/2026-07-19-add-plan-edit-form/` | `plan-edit` |
-| 6 | add-plan-detail-view | `archive/2026-07-19-add-plan-detail-view/` | `plan-detail` |
-| 7 | add-plan-list-view | `archive/2026-07-19-add-plan-list-view/` | `plan-list` |
-| 8 | add-smart-sort | `archive/2026-07-19-add-smart-sort/` | `sort-engine` |
-| 9 | add-blog-tiptap-editor | `archive/2026-07-19-add-blog-tiptap-editor/` | `blog-editor` |
-| 10 | add-framework-drawer | `archive/2026-07-19-add-framework-drawer/` | `framework-drawer` |
-| 11 | add-blog-attachment | `archive/2026-07-19-add-blog-attachment/` | `blog-attachment` |
-| 12 | add-blog-list-and-detail | `archive/2026-07-19-add-blog-list-and-detail/` | `blog-list-and-detail` |
-| 13 | add-kanban-board | `archive/2026-07-19-add-kanban-board/` | `kanban-board` |
-| 14 | add-settings-and-shell | `archive/2026-07-19-add-settings-and-shell/` | `settings-and-shell` |
+- 关于依赖：原计划使用 MiniSearch 做全文检索，因沙箱环境安装被拦截，改用零依赖自研 `BlogSearchService`（百条级数据检索 < 50ms，满足本地面板场景）。
+- 实现以已批准的 `docs/v1.2/design.md` 架构设计 + 团队拍板的 5 项决策为准。
 
-`openspec list` 当前为空（全部归档），新增需求走 `proposal → design → specs → tasks → archive` 闭环。
+## [1.3.0] - AI 助理（规划中 / Planned）
 
-### Notes
+> 以下为已在路线图中规划、尚未在本迭代落地的 AI 能力，列出以供前瞻：
 
-- 数据全部本地存储（IndexedDB + localStorage），无任何网络请求
-- 真实网络搜索、PDF/DOCX 解析、云同步推迟到 v1.1+
-- dark mode 在 v1.0 已全站适配（v1.0 末班车补齐）
+- **AI 对话 / 总结模块（v1.3-AI）**
+  - 基于 `ai-chat` 已调研方案，提供计划/博客的对话式问答与自动总结。
+  - 复用本迭代新增的 `contentText`、`searchSnippet`、标签与文件夹维度作为检索与上下文输入。
+  - 复用 `useAIGenerate` 生成管线和 `AIStatusBar` 停止/状态条交互。
+  - 设计阶段产出见 `openspec/changes/ai-chat-create-content/design.md` 等历史调研文档。
 
-[1.0.0]: https://example.com/planote/releases/tag/v1.0.0
+<!-- 历史版本保留区（0.1.0 之前的脚手架与仪表盘迭代） -->

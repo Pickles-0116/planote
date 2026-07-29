@@ -9,21 +9,17 @@ import { useEffect, useState } from 'react';
 import {
   Palette,
   Database,
-  Info,
-  MessageCircle,
   Bot,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ThemeSettings from './ThemeSettings';
 import DataSettings from './DataSettings';
-import AboutSettings from './AboutSettings';
-import FeedbackSettings from './FeedbackSettings';
 import ModelConfigPanel from '@/features/ai/components/ModelConfigPanel';
 import CallStatsPanel from '@/features/ai/components/CallStatsPanel';
 import DataInspector from '@/features/settings/components/DataInspector';
 
-type SettingsKey = 'theme' | 'ai' | 'data' | 'about' | 'feedback';
+type SettingsKey = 'theme' | 'ai' | 'data';
 
 interface NavItem {
   key: SettingsKey;
@@ -35,16 +31,12 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'theme', label: '主题', icon: Palette },
   { key: 'ai', label: 'AI 模型', icon: Bot },
   { key: 'data', label: '数据', icon: Database },
-  { key: 'about', label: '关于', icon: Info },
-  { key: 'feedback', label: '反馈', icon: MessageCircle },
 ];
 
 const HASH_TO_KEY: Record<string, SettingsKey> = {
   theme: 'theme',
   ai: 'ai',
   data: 'data',
-  about: 'about',
-  feedback: 'feedback',
 };
 
 function getInitialKey(): SettingsKey {
@@ -91,7 +83,7 @@ export default function Settings(): JSX.Element {
             设置
           </h1>
           <p className="text-xs text-brand-500 dark:text-stone-400 mt-1">
-            主题 · 数据 · 关于
+            主题 · AI · 数据
           </p>
         </div>
         <ul className="space-y-1">
@@ -133,8 +125,6 @@ export default function Settings(): JSX.Element {
           </div>
         )}
         {activeKey === 'data' && <DataSettings />}
-        {activeKey === 'about' && <AboutSettings />}
-        {activeKey === 'feedback' && <FeedbackSettings />}
 
         {/* 调试区块：始终显示，让用户直观确认 IndexedDB 数据状态 */}
         <DataInspector />

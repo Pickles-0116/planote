@@ -25,6 +25,7 @@ import { createBlogTemplateRepo } from './BlogTemplateRepo';
 import { createAICallLogRepo } from './AICallLogRepo';
 import { createCollectionRepo } from './CollectionRepo';
 import { createChatSessionRepo } from './ChatSessionRepo';
+import { createFolderRepo } from './FolderRepo';
 
 // 生产用单例（模块加载时构造一次）
 export const planRepo = createPlanRepo();
@@ -37,6 +38,7 @@ export const blogTemplateRepo = createBlogTemplateRepo();
 export const aiCallLogRepo = createAICallLogRepo();
 export const collectionRepo = createCollectionRepo();
 export const chatSessionRepo = createChatSessionRepo();
+export const folderRepo = createFolderRepo();
 
 // 同时导出 db 实例，便于 DevTools 控制台直接调试（生产代码请勿 import）
 export { db } from '../index';
@@ -52,3 +54,4 @@ export { createBlogTemplateRepo } from './BlogTemplateRepo';
 export { createAICallLogRepo } from './AICallLogRepo';
 export { createCollectionRepo } from './CollectionRepo';
 export { createChatSessionRepo } from './ChatSessionRepo';
+export { createFolderRepo } from './FolderRepo';

@@ -35,6 +35,8 @@ import type {
   Collection,
   CollectionItem,
   CollectionEntityType,
+  Folder,
+  FolderType,
 } from '@/types/domain';
 
 // ========== 错误类型 ==========
@@ -281,6 +283,53 @@ export interface CollectionRepository {
   getItemCollections(entityType: CollectionEntityType, entityId: ID): Promise<Collection[]>;
 }
 
+// ========== Folder Repository（v1.2 F1） ==========
+
+/** Folder 创建入参：去掉 id / 时间戳 / blogCount。 */
+export type FolderCreateInput = Omit<Folder, 'id' | 'createdAt' | 'updatedAt' | 'blogCount'> & {
+  /** blogCount 默认 0，允许调用方显式覆盖。 */
+  blogCount?: number;
+};
+
+/** 删除文件夹时的级联策略。 */
+export interface FolderDeleteOptions {
+  /**
+   * 子文件夹与博客改派到的目标父级 ID。
+   * 缺省 = 被删文件夹自身的父级（即「上移一层」）；父级为 root 即「未分类」。
+   */
+  reparentTo?: ID;
+}
+
+/** 文件夹数据访问接口（V1.2 新增）。 */
+export interface FolderRepository {
+  /** 列出全部文件夹（按 depth → order 排序）。 */
+  list(): Promise<Folder[]>;
+  /** 按 ID 获取单个文件夹。 */
+  get(id: ID): Promise<Folder | undefined>;
+  /** 创建文件夹（自动计算 depth；校验树深 ≤ 2）。 */
+  create(input: FolderCreateInput): Promise<Folder>;
+  /** 更新文件夹（名称/排序等）。 */
+  update(id: ID, patch: Partial<Folder>): Promise<Folder>;
+  /**
+   * 删除文件夹。
+   * - 子文件夹上移一层（parentId 改派 `reparentTo` 或缺省为自身父级）。
+   * - 归属该文件夹的博客 folderId 改派同一目标（父为 root 即未分类）。
+   * - 维护 blogCount。禁止删除根文件夹。
+   */
+  delete(id: ID, options?: FolderDeleteOptions): Promise<void>;
+  /**
+   * 拖拽改派父级（移动文件夹）。
+   * 校验：不能移入自身或自身子孙；移动后 depth 仍 ≤ 2。
+   */
+  move(id: ID, newParentId: ID): Promise<Folder>;
+  /** 读取从 root 到该文件夹的路径（含自身），用于面包屑。 */
+  getPath(id: ID): Promise<Folder[]>;
+  /** 读取某父级下的直接子文件夹（不含孙）。 */
+  getChildren(parentId: ID): Promise<Folder[]>;
+  /** 维护 blogCount 缓存（博客增删/移动时调用，delta 可正可负）。 */
+  bumpBlogCount(folderId: ID, delta: number): Promise<void>;
+}
+
 // ========== AICallLog Repository ==========
 
 /** AICallLog 创建入参。 */
@@ -377,6 +426,8 @@ export type {
   Collection,
   CollectionItem,
   CollectionEntityType,
+  Folder,
+  FolderType,
   ChatSession,
   ChatMessage,
   ChatContext,

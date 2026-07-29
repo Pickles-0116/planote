@@ -4,6 +4,9 @@
  * 顶层 hooks pipeline（spec §2.1 共享数据流）：
  *   useLiveQuery → useSortedPlans → usePlanSearch → [GroupedView|AllView|TableView]
  *
+ * V1.2 B5：多维筛选改用统一 `useEntityFilters`（状态 / 时间维度 / 层级 / 标签 / 日期），
+ * 并把 `tags` 传入 PlanFilterPanel 渲染标签筛选 UI。
+ *
  * 视图切换：
  *   视图模式从 useUIStore.planListView 读取（持久化到 localStorage）
  *
@@ -11,16 +14,11 @@
  *   - 加载中（undefined）→ PlanListSkeleton
  *   - 全部数据为空 + 无 query → illustration variant EmptyState
  *   - 搜索无结果 + query 非空 → compact variant EmptyState + 清除筛选
- *
- * 不在本 change 范围：
- *   - 计划详情页（add-plan-detail-view 接手）
- *   - 创建/编辑表单（add-plan-edit-form 接手）
- *   - 批量操作（add-plan-batch-ops 接手）
  */
 
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Notebook, SearchX, Filter } from 'lucide-react';
+import { Notebook, SearchX, Filter } from 'lucide-react';
 import EmptyState from '@/components/shell/EmptyState';
 import PlanSearchBox from '@/components/plans/PlanSearchBox';
 import PlanSortDropdown from '@/components/plans/PlanSortDropdown';
@@ -33,7 +31,9 @@ import PlanGroupedView from '@/features/plan/components/PlanGroupedView';
 import PlanListAllView from '@/features/plan/components/PlanListAllView';
 import PlanTableView from '@/features/plan/components/PlanTableView';
 import PlanTreeView from '@/features/plan/components/PlanTreeView';
-import PlanFilterPanel, { type PlanFilterState, DEFAULT_PLAN_FILTERS } from '@/features/plan/components/PlanFilterPanel';
+import PlanFilterPanel from '@/features/plan/components/PlanFilterPanel';
+import { useEntityFilters } from '@/features/filters/useEntityFilters';
+import { useTags } from '@/stores';
 import type { Plan } from '@/types/domain';
 import PlanListSkeleton from './PlanListSkeleton';
 import SortHint from './SortHint';
@@ -48,15 +48,18 @@ export default function PlanList() {
   const setSort = useUIStore((s) => s.setPlanListSort);
 
   const [query, setQuery] = useState('');
-  const [filters, setFilters] = useState<PlanFilterState>(DEFAULT_PLAN_FILTERS);
   const [filterOpen, setFilterOpen] = useState(false);
+
+  // V1.2 B5：统一多维筛选（状态 / 时间维度 / 层级 / 标签 / 日期）
+  const { filters, setFilters, apply, hasActiveFilters, reset } = useEntityFilters<Plan>();
+  const tags = useTags();
 
   // 1) 原始数据（实时订阅）
   const rawPlans = usePlans();
   // 2) 智能排序（add-smart-sort 增量：传入 planListSort 切换）
   const sortedPlans = useSortedPlans(rawPlans, sort);
-  // 3) 多维筛选
-  const filteredByPanel = useMemo(() => applyPlanFilters(sortedPlans ?? [], filters), [sortedPlans, filters]);
+  // 3) 多维筛选（useEntityFilters.apply）
+  const filteredByPanel = useMemo(() => apply(sortedPlans ?? []), [sortedPlans, apply]);
   // 4) 搜索过滤
   const filteredPlans = usePlanSearch(filteredByPanel, query);
 
@@ -94,8 +97,8 @@ export default function PlanList() {
           sort={sort}
           onSortChange={setSort}
           filterOpen={filterOpen}
-          onToggleFilter={() => setFilterOpen(v => !v)}
-          hasActiveFilters={filters.statuses.length > 0 || filters.timeDims.length > 0 || filters.dateRange !== null}
+          onToggleFilter={() => setFilterOpen((v) => !v)}
+          hasActiveFilters={hasActiveFilters}
         />
         <EmptyState
           icon={SearchX}
@@ -103,7 +106,10 @@ export default function PlanList() {
           description={`没有 plan 包含「${query}」`}
           action={{
             label: '清除筛选',
-            onClick: () => { setQuery(''); setFilters(DEFAULT_PLAN_FILTERS); },
+            onClick: () => {
+              setQuery('');
+              reset();
+            },
             variant: 'secondary',
           }}
           variant="compact"
@@ -123,14 +129,15 @@ export default function PlanList() {
         sort={sort}
         onSortChange={setSort}
         filterOpen={filterOpen}
-        onToggleFilter={() => setFilterOpen(v => !v)}
-        hasActiveFilters={filters.statuses.length > 0 || filters.timeDims.length > 0 || filters.dateRange !== null}
+        onToggleFilter={() => setFilterOpen((v) => !v)}
+        hasActiveFilters={hasActiveFilters}
       />
       {filterOpen && (
         <PlanFilterPanel
           filters={filters}
           onChange={setFilters}
           matchCount={filteredPlans?.length ?? 0}
+          tags={tags ?? []}
         />
       )}
       {view === 'group' && sort === DEFAULT_SORT_KEY && <SortHint />}
@@ -159,7 +166,6 @@ function PageHeader({ count }: { count: number }) {
         to="/plans/new"
         className="px-4 py-2.5 rounded-xl bg-brand-900 dark:bg-stone-100 text-white dark:text-stone-900 text-sm font-medium hover:bg-brand-800 dark:hover:bg-stone-200 transition flex items-center gap-2 shadow-sm"
       >
-        <Plus size={12} />
         新建计划
       </Link>
     </div>
@@ -215,28 +221,4 @@ function Toolbar({
       <PlanViewSwitcher value={view} onChange={onViewChange} />
     </div>
   );
-}
-
-/** v1.4：多维筛选应用函数。 */
-function applyPlanFilters(plans: Plan[], filters: PlanFilterState): Plan[] {
-  let result = plans;
-  if (filters.statuses.length > 0) {
-    result = result.filter(p => filters.statuses.includes(p.status));
-  }
-  if (filters.timeDims.length > 0) {
-    result = result.filter(p => filters.timeDims.includes(p.timeDim));
-  }
-  if (filters.selectedTagIds.length > 0) {
-    result = result.filter(p => p.tagIds.some(id => filters.selectedTagIds.includes(id)));
-  }
-  if (filters.dateRange) {
-    const { start, end } = filters.dateRange;
-    if (start) {
-      result = result.filter(p => (p.startDate ?? '') >= start);
-    }
-    if (end) {
-      result = result.filter(p => (p.startDate ?? '') <= end);
-    }
-  }
-  return result;
 }
