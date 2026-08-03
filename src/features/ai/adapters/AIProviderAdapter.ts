@@ -21,6 +21,12 @@ export interface GenerateOptions {
   model: string;
   /** AbortSignal 用于取消生成。 */
   signal?: AbortSignal;
+  /**
+   * 流式分块回调（D1 思考过程收集用）。
+   * - `content`：正文增量（与 generateStream 的 yield 内容一致，供需要旁路捕获的调用方使用）。
+   * - `thinking`：模型思考过程增量（reasoning_content / thinking）。
+   */
+  onChunk?: (chunk: { content?: string; thinking?: string }) => void;
 }
 
 /** 流式生成的 usage 统计（部分服务商在最后一个 chunk 返回）。 */
@@ -63,6 +69,7 @@ export const PROVIDER_BASE_URLS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
   claude: 'https://api.anthropic.com/v1',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  minimax: 'https://api.minimaxi.com/v1',
 };
 
 /**
@@ -72,5 +79,6 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   claude: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
   qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
+  minimax: ['MiniMax-Text-01', 'abab6.5s-chat', 'MiniMax-M3'],
   custom: [],
 };

@@ -53,8 +53,11 @@ export default function DataQueryCard({ tool, filter }: Props): JSX.Element {
   const title = TOOL_TITLES[tool] ?? `查询结果 - ${tool}`;
   const rows = result?.displayRows ?? [];
   const summary = result?.summary;
+  const total = result?.total ?? rows.length;
   const overflow = rows.length > MAX_ROWS ? rows.length - MAX_ROWS : 0;
   const visibleRows = rows.slice(0, MAX_ROWS);
+  /** 无法识别、已被忽略的查询条件（提示用户为何结果范围与预期不同）。 */
+  const ignoredKeys = result?.ignoredKeys ?? [];
 
   return (
     <CardShell
@@ -105,12 +108,15 @@ export default function DataQueryCard({ tool, filter }: Props): JSX.Element {
               ))}
             </tbody>
           </table>
-          {overflow > 0 && (
-            <p className="mt-2 text-[11px] text-stone-400 dark:text-stone-500">
-              还有 {overflow} 条未显示
-            </p>
-          )}
+          <p className="mt-2 text-[11px] text-stone-400 dark:text-stone-500">
+            共命中 {total} 条{overflow > 0 ? `，还有 ${overflow} 条未显示` : ''}
+          </p>
         </div>
+      )}
+      {ignoredKeys.length > 0 && (
+        <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+          已忽略无法识别的查询条件：{ignoredKeys.join('、')}
+        </p>
       )}
       {filter && Object.keys(filter).length > 0 && (
         <details className="mt-2">

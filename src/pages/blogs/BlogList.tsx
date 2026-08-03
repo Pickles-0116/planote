@@ -31,7 +31,7 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Notebook, PenLine, SearchX } from 'lucide-react';
+import { Notebook, PenLine, SearchX, Sparkles, X } from 'lucide-react';
 import EmptyState from '@/components/shell/EmptyState';
 import Skeleton from '@/components/shell/Skeleton';
 import BlogCard from '@/features/blog/components/BlogCard';
@@ -39,10 +39,12 @@ import BlogListFilters from '@/features/blog/components/BlogListFilters';
 import BlogListToolbar from '@/features/blog/components/BlogListToolbar';
 import ImportMarkdownButton from '@/features/blog/components/ImportMarkdownButton';
 import BlogByPlanView from '@/features/blog/components/BlogByPlanView';
+import SkillPickPanel from '@/features/skills/components/SkillPickPanel';
 import { useFilteredBlogs, type BlogWithSnippet } from '@/features/blog/hooks/useFilteredBlogs';
 import { useBlogs, useAllTemplates, useTags, useUIStore } from '@/stores';
 import type { BlogTemplate, BlogSource, ID } from '@/types/domain';
 import type { BlogFilters } from '@/features/blog/hooks/useFilteredBlogs';
+import { cn } from '@/lib/utils';
 
 export default function BlogList(): JSX.Element {
   const navigate = useNavigate();
@@ -62,6 +64,29 @@ export default function BlogList(): JSX.Element {
   const [source, setSource] = useState<BlogSource | 'all'>('all');
   const [wordCountRange, setWordCountRange] = useState<{ min: number; max: number } | null>(null);
   const [dateRange, setDateRange] = useState<{ start: string; end: string } | null>(null);
+
+  // 多选 → AI 总结（v1.3-fix T12）
+  const [selectedBlogIds, setSelectedBlogIds] = useState<Set<ID>>(new Set());
+  const [panelOpen, setPanelOpen] = useState<boolean>(false);
+  const MAX_SELECT = 10;
+
+  const toggleSelect = useCallback((id: ID): void => {
+    setSelectedBlogIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        if (next.size >= MAX_SELECT) {
+          window.alert(`最多同时选择 ${MAX_SELECT} 篇博客`);
+          return prev;
+        }
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedBlogIds(new Set()), []);
 
   // 数据订阅
   const blogs = useBlogs();
@@ -123,17 +148,50 @@ export default function BlogList(): JSX.Element {
 
   const renderBlogs = useCallback(
     (list: BlogWithSnippet[]): JSX.Element => {
+      const isSelected = (id: ID): boolean => selectedBlogIds.has(id);
+      const checkbox = (b: BlogWithSnippet): JSX.Element => (
+        <label
+          className={cn(
+            'absolute left-3 top-3 z-10 flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition',
+            isSelected(b.id)
+              ? 'border-brand-900 bg-brand-900 text-white dark:border-brand-400 dark:bg-brand-400 dark:text-stone-900'
+              : 'border-stone-300 bg-white/90 hover:border-brand-900 dark:border-stone-600 dark:bg-stone-800/90',
+          )}
+        >
+          <input
+            type="checkbox"
+            checked={isSelected(b.id)}
+            onChange={() => toggleSelect(b.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="sr-only"
+            aria-label={`选择「${b.title}」`}
+          />
+          {isSelected(b.id) && (
+            <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={3}>
+              <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </label>
+      );
       if (view === 'grid') {
         return (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-view="grid">
             {list.map((b) => (
-              <BlogCard
+              <div
                 key={b.id}
-                blog={b}
-                density="grid"
-                framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
-                snippet={b.searchSnippet}
-              />
+                className={cn(
+                  'relative transition rounded-2xl',
+                  isSelected(b.id) && 'ring-2 ring-brand-900/60 dark:ring-brand-400/60',
+                )}
+              >
+                {checkbox(b)}
+                <BlogCard
+                  blog={b}
+                  density="grid"
+                  framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
+                  snippet={b.searchSnippet}
+                />
+              </div>
             ))}
           </div>
         );
@@ -141,18 +199,26 @@ export default function BlogList(): JSX.Element {
       return (
         <div className="space-y-2" data-view="list">
           {list.map((b) => (
-            <BlogCard
+            <div
               key={b.id}
-              blog={b}
-              density="list"
-              framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
-              snippet={b.searchSnippet}
-            />
+              className={cn(
+                'relative rounded-xl transition',
+                isSelected(b.id) && 'ring-2 ring-brand-900/60 dark:ring-brand-400/60',
+              )}
+            >
+              {checkbox(b)}
+              <BlogCard
+                blog={b}
+                density="list"
+                framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
+                snippet={b.searchSnippet}
+              />
+            </div>
           ))}
         </div>
       );
     },
-    [view, templateMap],
+    [view, templateMap, selectedBlogIds, toggleSelect],
   );
 
   // 加载态
@@ -303,6 +369,38 @@ export default function BlogList(): JSX.Element {
       {/* 网格 / 列表视图：扁平渲染全部博客（按文件夹分组已移除） */}
       {!filtered && view !== 'byPlan' && <Skeleton className="h-44" />}
       {filtered && view !== 'byPlan' && renderBlogs(filtered)}
+
+      {/* v1.3-fix T12：多选操作条（已选 > 0 时出现） */}
+      {selectedBlogIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-2xl bg-brand-900 px-5 py-3 text-white shadow-2xl dark:bg-stone-800">
+          <span className="text-sm whitespace-nowrap">
+            已选 <b className="font-semibold">{selectedBlogIds.size}</b> 篇
+          </span>
+          <button
+            type="button"
+            onClick={() => setPanelOpen(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-brand-900 transition hover:bg-stone-100 dark:text-stone-900"
+          >
+            <Sparkles size={14} />
+            AI 总结
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            aria-label="取消选择"
+            className="flex items-center gap-1 rounded-lg p-1.5 text-brand-200 transition hover:bg-white/10 hover:text-white"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* v1.3-fix T12：Skill 总结面板 */}
+      <SkillPickPanel
+        open={panelOpen}
+        blogIds={[...selectedBlogIds]}
+        onClose={() => setPanelOpen(false)}
+      />
     </div>
   );
 }

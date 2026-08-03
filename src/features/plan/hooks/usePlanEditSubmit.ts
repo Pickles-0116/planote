@@ -22,6 +22,7 @@
 import { useCallback, useState } from 'react';
 import { usePlanStore, useItemsStore } from '@/stores';
 import { db, planRepo, itemRepo, tagRepo } from '@/db/repos';
+import { deleteRecord } from '@/db/sync';
 import { newId } from '@/lib/id';
 import type { ID, Item } from '@/types/domain';
 import type { DraftFormState, DraftItem } from './usePlanEditDraft';
@@ -237,7 +238,7 @@ export function usePlanEditSubmit() {
           // 4. 串行执行：create → update → delete（避免 ID 引用错乱）
           //    类内用 Promise.all；全部包在一个 Dexie transaction 中
           // 5. 最后重算 progress
-          await db.transaction('rw', db.items, db.plans, async () => {
+          await db.transaction('rw', db.items, db.plans, db.tombstones, async () => {
             // 5.1 create
             await Promise.all(
               diff.toCreate.map(async (c) => {
@@ -277,7 +278,7 @@ export function usePlanEditSubmit() {
             // 5.3 delete
             await Promise.all(
               diff.toDelete.map(async (delId) => {
-                await db.items.delete(delId);
+                await deleteRecord(db, 'items', delId);
                 // 从 plan.itemIds 移除
                 const plan = await db.plans.get(planId);
                 if (plan && plan.itemIds.includes(delId)) {

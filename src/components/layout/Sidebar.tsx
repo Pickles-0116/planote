@@ -9,6 +9,8 @@ import {
   FileText,
   Sparkles,
   FolderTree,
+  Boxes,
+  Download,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import SidebarFolders from './SidebarFolders';
@@ -27,6 +29,7 @@ const PRIMARY_NAV: NavItem[] = [
   { to: '/blogs', label: '博客', icon: <Newspaper size={16} /> },
   { to: '/folders', label: '文件夹', icon: <FolderTree size={16} /> },
   { to: '/templates', label: '模板', icon: <FileText size={16} /> },
+  { to: '/skills', label: '技能', icon: <Boxes size={16} />, badge: '新' },
   { to: '/ai-chat', label: 'AI 对话', icon: <Sparkles size={16} /> },
   { to: '/kanban', label: '看板', icon: <Kanban size={16} /> },
 ];
@@ -83,6 +86,12 @@ export default function Sidebar() {
             <SettingsIcon size={16} />
           </span>
           <span>设置</span>
+        </NavLink>
+        <NavLink to="/export" className={linkClass}>
+          <span className="w-5 flex items-center justify-center">
+            <Download size={16} />
+          </span>
+          <span>导出</span>
         </NavLink>
       </nav>
 

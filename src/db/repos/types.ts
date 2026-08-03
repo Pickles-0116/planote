@@ -200,8 +200,8 @@ export interface FrameworkRepository {
 
 // ========== Tag Repository ==========
 
-/** Tag 创建入参：去掉 id / usageCount / createdAt。 */
-export type TagCreateInput = Omit<Tag, 'id' | 'usageCount' | 'createdAt'>;
+/** Tag 创建入参：去掉 id / usageCount / createdAt（updatedAt 由 create 自动填充）。 */
+export type TagCreateInput = Omit<Tag, 'id' | 'usageCount' | 'createdAt' | 'updatedAt'>;
 
 /** Tag 更新入参。 */
 export type TagUpdatePatch = Partial<Pick<Tag, 'name' | 'color'>>;

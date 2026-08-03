@@ -75,6 +75,20 @@ body {
   animation: fadeUp 0.4s ease-out both;
 }
 
+/* 纯透明度入场（不动 transform，避免覆盖 fixed 居中用的 -translate-*） */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s ease-out both;
+}
+
 /* 延迟变体（用于瀑布式入场） */
 .animate-delay-50 { animation-delay: 50ms; }
 .animate-delay-100 { animation-delay: 100ms; }

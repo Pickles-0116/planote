@@ -17,6 +17,9 @@ import LoadingOverlay from '@/components/shell/LoadingOverlay';
  * - /blogs/:id         → 博客详情
  * - /blogs/:id/edit    → 博客编辑器（编辑）
  * - /kanban            → 看板
+ * - /skills            → 技能管理
+ * - /skills/new        → 技能编辑（新建）
+ * - /skills/:id/edit   → 技能编辑（编辑）
  * - /settings          → 设置
  *
  * 懒加载：所有页面通过 React.lazy 动态导入，首屏只下载 Dashboard chunk；
@@ -37,6 +40,9 @@ const CollectionDetail = lazy(() => import('@/pages/CollectionDetail'));
 const TemplateList = lazy(() => import('@/features/templates/components/TemplateList'));
 const TemplateEditor = lazy(() => import('@/features/templates/components/TemplateEditor'));
 const AIChat = lazy(() => import('@/pages/ai-chat/AIChat'));
+const Skills = lazy(() => import('@/pages/Skills'));
+const SkillEditorPage = lazy(() => import('@/pages/skills/SkillEditorPage'));
+const Export = lazy(() => import('@/pages/Export'));
 
 /**
  * 路由级 Suspense 包装器
@@ -104,6 +110,22 @@ export default function App() {
         <Route
           path="/ai-chat"
           element={withSuspense(<AIChat />, '加载 AI 对话…')}
+        />
+        <Route
+          path="/skills"
+          element={withSuspense(<Skills />, '加载技能管理…')}
+        />
+        <Route
+          path="/skills/new"
+          element={withSuspense(<SkillEditorPage />, '加载技能编辑器…')}
+        />
+        <Route
+          path="/skills/:id/edit"
+          element={withSuspense(<SkillEditorPage />, '加载技能编辑器…')}
+        />
+        <Route
+          path="/export"
+          element={withSuspense(<Export />, '加载导出中心…')}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -16,6 +16,7 @@ import type {
 import { AppError } from './types';
 import { newId } from '@/lib/id';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 
 const nowISO = (): ISODate => new Date().toISOString();
 
@@ -135,7 +136,16 @@ export class BlogTemplateRepo implements BlogTemplateRepository {
 
   async delete(id: ID): Promise<void> {
     await requireTemplate(this.db, id);
-    await this.db.blogTemplates.delete(id);
+    await this.db.transaction(
+      'rw',
+      this.db.blogTemplates,
+      this.db.tombstones,
+      async () => {
+        await this.db.blogTemplates.delete(id);
+        // 物理删除 + 写墓碑
+        await this.db.tombstones.put(makeTombstone('blogTemplates', id));
+      },
+    );
   }
 
   async duplicate(id: ID): Promise<BlogTemplate> {

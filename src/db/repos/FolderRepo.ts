@@ -23,6 +23,7 @@ import {
   FOLDER_TREE_DEPTH_LIMIT,
 } from '@/features/folders/constants';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 
 const nowISO = (): ISODate => new Date().toISOString();
 
@@ -109,6 +110,7 @@ export class FolderRepo implements FolderRepository {
       'rw',
       this.db.folders,
       this.db.blogs,
+      this.db.tombstones,
       async () => {
         // 1) 子文件夹上移一层
         const children = await this.db.folders
@@ -138,8 +140,9 @@ export class FolderRepo implements FolderRepository {
           await this.bumpBlogCount(targetParentId, blogs.length);
         }
 
-        // 4) 删除自身
+        // 4) 删除自身 + 写墓碑（子文件夹与博客只是改派，不删除，故不写墓碑）
         await this.db.folders.delete(id);
+        await this.db.tombstones.put(makeTombstone('folders', id));
       },
     );
   }

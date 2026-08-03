@@ -24,6 +24,7 @@ import { newId } from '@/lib/id';
 import { computeUrgency } from '@/shared/utils/urgency';
 import { computeProgress } from '@/shared/utils/progress';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 
 const throwNotFound = (id: ID): never => {
   const payload: AppErrorPayload = {
@@ -160,15 +161,25 @@ export class PlanRepo implements PlanRepository {
     // 存在性校验（不存在抛 NOT_FOUND）
     await requirePlan(this.db, id);
 
+    // 先收集将被级联删除的 items（用于写墓碑），避免在事务内二次查询
+    const cascadedItems = await this.db.items
+      .where('planId')
+      .equals(id)
+      .toArray();
+
     await this.db.transaction(
       'rw',
       this.db.plans,
       this.db.items,
       this.db.blogs,
+      this.db.tombstones,
       async () => {
-        // 1. cascade 删 items
-        await this.db.items.where('planId').equals(id).delete();
-        // 2. blog.sourcePlanId 置空（保留博客内容）
+        // 1. cascade 删 items + 写墓碑
+        for (const it of cascadedItems) {
+          await this.db.items.delete(it.id);
+          await this.db.tombstones.put(makeTombstone('items', it.id));
+        }
+        // 2. blog.sourcePlanId 置空（保留博客内容，不写墓碑）
         const relatedBlogs = await this.db.blogs
           .where('sourcePlanId')
           .equals(id)
@@ -176,8 +187,9 @@ export class PlanRepo implements PlanRepository {
         for (const b of relatedBlogs) {
           await this.db.blogs.put({ ...b, sourcePlanId: undefined });
         }
-        // 3. 删 plan
+        // 3. 删 plan + 写墓碑
         await this.db.plans.delete(id);
+        await this.db.tombstones.put(makeTombstone('plans', id));
       },
     );
   }

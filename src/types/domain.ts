@@ -78,6 +78,11 @@ export interface Tag {
   /** 引用计数：被多少个 Plan / Blog 引用。 */
   usageCount: number;
   createdAt: ISODate;
+  /**
+   * 最后更新时间（M1 云同步新增，用于 LWW 合并，见 design.md §4.3）。
+   * 历史数据在 DB 升级时按 `createdAt` 兜底补齐。
+   */
+  updatedAt: ISODate;
 }
 
 // ========== 附件 ==========
@@ -128,6 +133,87 @@ export interface Framework {
   useCount: number;
   /** 内置 vs 用户自定义。v1.0 全为 true。 */
   builtin: boolean;
+  /**
+   * 创建时间（M1 云同步新增，用于 LWW 合并兜底，见 design.md §4.3）。
+   * 历史数据在 DB 升级时按当前时间补齐。
+   */
+  createdAt: ISODate;
+  /**
+   * 最后更新时间（M1 云同步新增，用于 LWW 合并，见 design.md §4.3）。
+   * 历史数据在 DB 升级时按当前时间补齐。
+   */
+  updatedAt: ISODate;
+}
+
+// ========== 技能（v1.3 S 模块：技能管理） ==========
+
+/** 技能类型（与侧边类型 chips / 筛选对齐）。 */
+export type SkillType = 'summary' | 'writing' | 'imitate' | 'translate' | 'custom';
+
+/** 技能参数定义（SkillEditor params builder 的最小单元）。 */
+export interface SkillParam {
+  /** 模板占位符 key，如 `topic`。模板中用 `{{topic}}` 引用。 */
+  key: string;
+  /** 展示名（选择器 / 实时预览中显示）。 */
+  label: string;
+  /** 输入控件类型。 */
+  type: 'text' | 'textarea' | 'number' | 'select';
+  /** 默认值（导出/预览时填充示例）。 */
+  default?: string;
+}
+
+/**
+ * 技能实体（用户可管理的 AI 总结 / 写作模板）。
+ *
+ * 与 BlogTemplate 解耦：技能是「对话内可 @ 调用的轻量 prompt 模板」，
+ * 不进入博客编辑器体系。
+ */
+export interface Skill {
+  id: ID;
+  name: string;
+  description?: string;
+  type: SkillType;
+  /**
+   * 所属技能文件夹 ID。缺省为 `ROOT_SKILL_FOLDER_ID`（「全部技能」）。
+   * 与博客 `folders` 表严格隔离（独立树、独立 repo）。
+   */
+  folderId: string;
+  /** 内置 vs 用户自定义。内置技能导出时需「复制为自定义」再导出。 */
+  builtin: boolean;
+  /**
+   * Prompt 模板，含占位符：`{{blogs}}` `{{topic}}` `{{text}}` `{{instruction}}` `{{target}}`。
+   * 占位符 `{{` 与 `}}` 必须成对，否则保存时被拦截（SkillEditor 校验）。
+   */
+  promptTemplate: string;
+  /** 参数定义（对应 @skill 选择器与实时预览）。 */
+  params: SkillParam[];
+  /** 引用次数（统计 + 热门排序）。 */
+  useCount: number;
+  /**
+   * 导入健康度（v1.3 修复流程）：
+   * - 缺省 / `'ready'`：格式合规、可被 `@skill` 引用。
+   * - `'raw'`：导入时格式不兼容，仅作「原样收藏」，尚未修复，`promptTemplate` 为空。
+   *   修复对话框确认后会就地改为 `'ready'` 并填充 `promptTemplate` / `params`。
+   */
+  status?: 'raw' | 'ready';
+  /** 原样收藏时保留的原始 markdown 文本，供后续「修复」使用（ready 技能为 undefined）。 */
+  rawText?: string;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+/** 技能文件夹（v1.3 新增，与博客 folders 表严格隔离，独立树）。 */
+export interface SkillFolder {
+  id: ID;
+  name: string;
+  /** 父文件夹 ID；根「全部技能」为 `''`。 */
+  parentId: ID;
+  /** 树深度（0/1/2）。 */
+  depth: number;
+  /** 同父级下排序序号。 */
+  order: number;
+  createdAt: ISODate;
+  updatedAt: ISODate;
 }
 
 // ========== 事项 ==========
@@ -217,7 +303,7 @@ export interface BlogTemplate {
 }
 
 /** AI 服务商类型。 */
-export type AIProvider = 'openai' | 'claude' | 'qwen' | 'custom';
+export type AIProvider = 'openai' | 'claude' | 'qwen' | 'custom' | 'minimax';
 
 /** AI 模型配置（BYOK 模式，Key 仅存本地）。 */
 export interface AIModelProfile {
@@ -386,6 +472,11 @@ export interface ChatMessage {
   id: ID;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  /**
+   * AI 思考过程（D1 新增）。由适配器解析 `reasoning_content`/`reasoning`/`thinking` 收集，
+   * UI 默认折叠展示「思考过程 ▼」。历史消息无此字段时保持原样（不渲染折叠区）。
+   */
+  thinking?: string;
   /** Unix 毫秒时间戳。 */
   timestamp: number;
   /** AI 消息携带的操作卡片（plan_preview / blog_preview / template_preview / data_query / suggestion）。 */
@@ -423,6 +514,59 @@ export interface ChatSession {
   context: ChatContext;
   /** 会话绑定的 AI 模型 ID（可选；缺省 = 全局默认模型）。 */
   modelProfileId?: ID;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+// ========== AI 执行计划（v1.3 P 模块：PlanMode） ==========
+
+/** PlanMode 中一个执行步骤的状态。 */
+export type ExecutionStepStatus = 'todo' | 'doing' | 'done';
+
+/**
+ * PlanMode 执行步骤类型（v1.3-fix F3 新增，缺省按 'custom' 处理）。
+ *
+ * - `query`：读本地数据（AI 可自行输出 get_* tool_call 走既有拦截链路）
+ * - `summarize`：总结类
+ * - `create_blog` / `create_template` / `create_plan`：产出预览，等用户确认
+ * - `skill`：走 S 模块技能（`toolData.skillId` 引用）
+ * - `custom`：缺省通用类型
+ */
+export type ExecutionStepType =
+  | 'query'
+  | 'summarize'
+  | 'create_blog'
+  | 'create_template'
+  | 'create_plan'
+  | 'skill'
+  | 'custom';
+
+/** PlanMode 执行计划中的一个步骤。 */
+export interface ExecutionStep {
+  id: ID;
+  title: string;
+  description?: string;
+  status: ExecutionStepStatus;
+  /** 步骤执行类型（缺省按 'custom' 处理）。 */
+  type?: ExecutionStepType;
+  /** 步骤附带数据（如 skill 步骤的 `{ skillId, params }`）。 */
+  toolData?: Record<string, unknown>;
+}
+
+/**
+ * PlanMode 产出 / 执行的计划实体。
+ *
+ * - 规划会话（A）调 `/plan <目标>` 生成；
+ * - 执行会话（B）调 `/execute 1-3|all` 逐步推进；
+ * - 状态存 `aiPlans` 表，跨会话共享（关掉再开仍接着进度）。
+ */
+export interface AIPlan {
+  id: ID;
+  title: string;
+  description?: string;
+  steps: ExecutionStep[];
+  /** 来源会话 ID（规划 A）。 */
+  sourceSessionId?: ID;
   createdAt: ISODate;
   updatedAt: ISODate;
 }
@@ -484,4 +628,9 @@ export type ActionCard =
   | { type: 'template_preview'; data: TemplatePreviewData }
   | { type: 'data_query'; tool: DataQueryRequest['tool']; filter?: Record<string, unknown> }
   | { type: 'suggestion'; data: SuggestionData }
+  | { type: 'execution_plan'; data: AIPlan }
+  | {
+      type: 'execution_step_result';
+      data: { planId: ID; stepOrder: number; title: string; result: string };
+    }
   | { type: 'unknown'; rawTool: string; rawData: unknown };

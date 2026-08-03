@@ -13,6 +13,12 @@ import { ROOT_FOLDER_ID, ROOT_FOLDER_NAME } from '@/features/folders/constants';
 
 // ========== 4 套内置框架 ==========
 
+/**
+ * 内置框架的稳定时间戳（M1 云同步新增 createdAt/updatedAt，用于 LWW 合并兜底）。
+ * 使用固定常量而非 `new Date()`，保证幂等种子写入产生稳定的时间值。
+ */
+const BUILTIN_FRAMEWORK_TIME = '2024-01-01T00:00:00.000Z';
+
 /** 框架 1：项目复盘（category=review, icon=GitPullRequest）。 */
 const FW_REVIEW: Framework = {
   id: 'fw_review',
@@ -22,6 +28,8 @@ const FW_REVIEW: Framework = {
   icon: 'GitPullRequest',
   builtin: true,
   useCount: 0,
+  createdAt: BUILTIN_FRAMEWORK_TIME,
+  updatedAt: BUILTIN_FRAMEWORK_TIME,
   sections: [
     {
       heading: '目标回顾',
@@ -60,6 +68,8 @@ const FW_HABIT: Framework = {
   icon: 'CalendarDays',
   builtin: true,
   useCount: 0,
+  createdAt: BUILTIN_FRAMEWORK_TIME,
+  updatedAt: BUILTIN_FRAMEWORK_TIME,
   sections: [
     {
       heading: '习惯定义',
@@ -98,6 +108,8 @@ const FW_NOTE: Framework = {
   icon: 'BookOpen',
   builtin: true,
   useCount: 0,
+  createdAt: BUILTIN_FRAMEWORK_TIME,
+  updatedAt: BUILTIN_FRAMEWORK_TIME,
   sections: [
     {
       heading: '一句话总结',
@@ -136,6 +148,8 @@ const FW_SUMMARY: Framework = {
   icon: 'BarChart3',
   builtin: true,
   useCount: 0,
+  createdAt: BUILTIN_FRAMEWORK_TIME,
+  updatedAt: BUILTIN_FRAMEWORK_TIME,
   sections: [
     {
       heading: '本月关键数据',

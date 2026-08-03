@@ -55,3 +55,6 @@ dev.err.bak
 dev.out.bak
 # - Local data backups
 planote-backup-*.json
+
+# Vite temp config (regenerated on dev/build)
+vite.config.ts.timestamp-*.mjs

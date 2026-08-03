@@ -21,6 +21,7 @@ const TAG_DEFAULTS = {
   color: '#64748B',
   usageCount: 0,
   createdAt: now(),
+  updatedAt: now(),
 };
 
 function makeTag(over: Partial<Tag> & { id: ID; name: string }): Tag {

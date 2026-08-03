@@ -19,6 +19,7 @@
 
 import { useCallback } from 'react';
 import { db, planRepo, itemRepo } from '@/db/repos';
+import { deleteRecord } from '@/db/sync';
 import type { ID, Item, ItemStatus } from '@/types/domain';
 import type { ItemCreateInput } from '@/db/repos/types';
 import { newId } from '@/lib/id';
@@ -164,8 +165,8 @@ export function useItemCRUD(planId: ID | null | undefined): UseItemCRUDResult {
         throw new Error(`Item ${itemId} does not belong to plan ${pid}`);
       }
       // 单事务：删 item + 同步 plan.itemIds
-      await db.transaction('rw', db.items, db.plans, async () => {
-        await db.items.delete(itemId);
+      await db.transaction('rw', db.items, db.plans, db.tombstones, async () => {
+        await deleteRecord(db, 'items', itemId);
         await removeItemIdFromPlan(pid, itemId);
       });
       // 重算 progress（删除可能改变比例）

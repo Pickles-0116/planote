@@ -7,6 +7,8 @@ import { seedIfNeeded, ensureFolders } from '@/db/seed';
 import { reconcileTags } from '@/db/reconcileTags';
 import { migrateAllToTemplates } from '@/features/templates/hooks/migratePresets';
 import { ErrorBoundary } from '@/components/shell/ErrorBoundary';
+import { getSyncConfig } from '@/db/sync';
+import { GitHubBackend, SyncEngine } from '@/sync';
 import './styles/globals.css';
 
 /**
@@ -35,6 +37,23 @@ reconcileTags(db).catch((err) => {
 
 migrateAllToTemplates().catch((err) => {
   console.error('[migrate] v1.4 migration failed:', err);
+});
+
+/* ============================================================
+ * T4.8 启动时接入同步引擎（M4 云同步）
+ *
+ * 读取同步配置，若配置完整则创建 SyncEngine 实例并启动自动同步。
+ * 不阻塞主流程：fire-and-forget，即使失败也不影响应用启动。
+ * ============================================================ */
+getSyncConfig(db).then((config) => {
+  if (!config.enabled || !config.repo || !config.token) {
+    return; // 配置未就绪，不启动
+  }
+  const backend = new GitHubBackend(config);
+  const engine = new SyncEngine(db, backend);
+  engine.startAutoSync();
+}).catch((err) => {
+  console.error('[sync] failed to initialize sync engine:', err);
 });
 
 /* ============================================================

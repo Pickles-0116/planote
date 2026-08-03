@@ -15,18 +15,30 @@ import { PROVIDER_BASE_URLS } from './AIProviderAdapter';
 import { formatAdapterError, explainFetchError } from './errorFormat';
 
 /** 解析 SSE data 行。 */
-function parseSSELine(line: string): { content?: string; usage?: StreamUsage; done?: boolean } {
+function parseSSELine(line: string): {
+  content?: string;
+  thinking?: string;
+  usage?: StreamUsage;
+  done?: boolean;
+} {
   if (!line.startsWith('data: ')) return {};
   const data = line.slice(6).trim();
   if (data === '[DONE]') return { done: true };
 
   try {
     const json = JSON.parse(data);
-    const content = json.choices?.[0]?.delta?.content ?? '';
+    const delta = json.choices?.[0]?.delta ?? {};
+    const content = delta.content ?? '';
+    // D1：收集思考过程（不同厂商字段名不同，逐一兜底）
+    const reasoning = delta.reasoning_content ?? delta.reasoning ?? delta.thinking ?? '';
     const usage = json.usage
       ? { promptTokens: json.usage.prompt_tokens, completionTokens: json.usage.completion_tokens }
       : undefined;
-    return { content: content || undefined, usage };
+    return {
+      content: content || undefined,
+      thinking: reasoning || undefined,
+      usage,
+    };
   } catch {
     return {};
   }
@@ -100,7 +112,12 @@ export class OpenAIAdapter implements AIProviderAdapter {
           const parsed = parseSSELine(trimmed);
           if (parsed.done) return lastUsage;
           if (parsed.usage) lastUsage = parsed.usage;
-          if (parsed.content) yield parsed.content;
+          // D1：思考过程通过 onChunk 旁路收集，不进入正文 yield
+          if (parsed.thinking && options.onChunk) options.onChunk({ thinking: parsed.thinking });
+          if (parsed.content) {
+            if (options.onChunk) options.onChunk({ content: parsed.content });
+            yield parsed.content;
+          }
         }
       }
     } finally {

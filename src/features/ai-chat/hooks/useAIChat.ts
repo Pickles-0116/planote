@@ -12,7 +12,6 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { getAdapter } from '@/features/ai/adapters';
-import type { ChatMessage as AIMessage } from '@/features/ai/adapters';
 import { useAIModelStore } from '@/features/ai/stores/aiModelStore';
 import { chatSessionRepo, aiCallLogRepo } from '@/db/repos';
 import { newId } from '@/lib/id';
@@ -20,8 +19,10 @@ import { parseToolCalls } from '../utils/toolCallParser';
 import { mapToolCallToActionCard } from '../utils/toolCallMapper';
 import { classifyIntent } from '../utils/intentClassifier';
 import { interceptDataQuery, formatQueryResultForLLM } from '../utils/queryInterceptor';
+import { buildLlmMessages } from '../utils/buildLlmMessages';
 import { emitChatEvent } from '../utils/emitChatEvent';
-import type { ChatSession, ChatMessage, ChatContext, ID, ChatMode, ActionCard } from '@/types/domain';
+import { createThinkingStream, mergeThinking } from '../utils/thinkingExtractor';
+import type { ChatSession, ChatMessage, ChatContext, ID, ChatMode, ActionCard, AIPlan } from '@/types/domain';
 
 export type ChatStatus = 'idle' | 'generating' | 'done' | 'error' | 'cancelled';
 
@@ -52,43 +53,14 @@ export interface UseAIChatReturn {
   setMode: (mode: ChatMode) => Promise<void>;
   /** 追加 assistant 消息（用于 handler 在创建成功后插入确认消息）。 */
   appendAssistantMessage: (text: string) => Promise<void>;
+  /** 追加带 ActionCard 的 assistant 消息（PlanMode）。 */
+  appendAssistantCard: (card: ActionCard, text?: string) => Promise<void>;
+  /** 更新会话内 execution_plan 卡片（步骤状态回写）。 */
+  updateAssistantPlan: (planId: ID, next: AIPlan) => Promise<void>;
   /** 加载会话列表（供 ChatSessionList 使用）。 */
   refreshSessions: () => Promise<ChatSession[]>;
   /** 当前所有会话（缓存）。 */
   sessions: ChatSession[];
-}
-
-const CONTEXT_WINDOW_ROUNDS = 10;
-
-/** 构造发送到 LLM 的 messages 数组：system + 最近 N 轮 + 早期摘要。 */
-function buildLlmMessages(
-  session: ChatSession,
-  systemPrompt: string,
-): AIMessage[] {
-  const all = session.messages;
-  // 收集 user/assistant 轮次（排除 system）
-  const turns: ChatMessage[] = all.filter((m) => m.role !== 'system');
-
-  const tail = turns.slice(-CONTEXT_WINDOW_ROUNDS);
-  const headCount = turns.length - tail.length;
-
-  const result: AIMessage[] = [{ role: 'system', content: systemPrompt }];
-  if (headCount > 0) {
-    const headTitles = turns
-      .slice(0, headCount)
-      .filter((m) => m.role === 'user')
-      .slice(0, 5)
-      .map((m) => m.content.slice(0, 30))
-      .join(' | ');
-    result.push({
-      role: 'system',
-      content: `[早期对话摘要 - 共 ${headCount} 轮] 用户的早期问题：${headTitles} ...`,
-    });
-  }
-  for (const m of tail) {
-    result.push({ role: m.role, content: m.content });
-  }
-  return result;
 }
 
 export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): UseAIChatReturn {
@@ -102,16 +74,19 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
   const [sessions, setSessions] = useState<ChatSession[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
-  const store = useAIModelStore();
+  // F4(D3)：仅订阅 profiles 用于渲染（availableProfiles）；动作函数内一律走 getState() 取最新态，
+  // 避免 persist 异步水合后闭包捕获旧 store 引用导致 profile 解析为空（关掉重开后无 AI 回复）。
+  const profiles = useAIModelStore((s) => s.profiles);
 
   /** 当前会话实际使用的 profile（per-session 覆盖 > 全局默认）。 */
   const resolveActiveProfile = useCallback(() => {
+    const { getProfile, getDefaultProfile } = useAIModelStore.getState();
     if (modelProfileId) {
-      const explicit = store.getProfile(modelProfileId);
+      const explicit = getProfile(modelProfileId);
       if (explicit) return explicit;
     }
-    return store.getDefaultProfile();
-  }, [modelProfileId, store]);
+    return getDefaultProfile();
+  }, [modelProfileId]);
 
   const refreshSessions = useCallback(async () => {
     const list = await chatSessionRepo.list();
@@ -204,9 +179,53 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
     [activeSessionId],
   );
 
+  /** 追加带 ActionCard 的 assistant 消息（PlanMode 用）。 */
+  const appendAssistantCard = useCallback(
+    async (card: ActionCard, text = '') => {
+      if (!activeSessionId) return;
+      const msg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        content: text,
+        timestamp: Date.now(),
+        actionCard: card,
+      };
+      const updated = await chatSessionRepo.appendMessage(activeSessionId, msg);
+      setMessages(updated.messages);
+    },
+    [activeSessionId],
+  );
+
+  /** 更新会话内 execution_plan 卡片（步骤状态变化后回写）。 */
+  const updateAssistantPlan = useCallback(
+    async (planId: ID, next: AIPlan) => {
+      if (!activeSessionId) return;
+      const session = await chatSessionRepo.get(activeSessionId);
+      if (!session) return;
+      const messages = session.messages.map((m) =>
+        m.actionCard?.type === 'execution_plan' && (m.actionCard.data as AIPlan).id === planId
+          ? { ...m, actionCard: { type: 'execution_plan', data: next } as ActionCard }
+          : m,
+      );
+      await chatSessionRepo.update(activeSessionId, { messages });
+      setMessages(messages);
+    },
+    [activeSessionId],
+  );
+
   const send = useCallback(
     async (text: string) => {
       if (!text.trim()) return;
+
+      // F4.2：会话可用性校验——activeSessionId 非空但会话已不存在（被删/脏数据）时给出友好提示而非静默失败。
+      if (activeSessionId) {
+        const exists = await chatSessionRepo.get(activeSessionId);
+        if (!exists) {
+          setStatus('error');
+          setErrorMessage('当前会话已不存在，请新建会话');
+          return;
+        }
+      }
 
       // 埋点：chat_send_message
       emitChatEvent('chat_send_message', {
@@ -251,7 +270,7 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
       }
 
       // 流式生成
-      const apiKey = store.getDecodedApiKey(profile.id);
+      const apiKey = useAIModelStore.getState().getDecodedApiKey(profile.id);
       const adapter = getAdapter(profile.provider);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -276,8 +295,12 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
       setMessages((prev) => [...prev, assistantMsg]);
 
       const startTime = performance.now();
-      let accumulated = '';
+      let rawAccum = ''; // 原始文本（调试/日志/异常信息）
+      let contentAccum = ''; // 剥离 thinking 后的干净正文
+      let tagThinkingAccum = ''; // 从正文中提取的 thinking
+      let thinkingAccum = ''; // D1：旁路收集思考过程（原生 reasoning 通道）
       let finalUsage: { promptTokens: number; completionTokens: number } | undefined;
+      const ts = createThinkingStream();
 
       try {
         const stream = adapter.generateStream(
@@ -287,6 +310,10 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
             maxTokens: profile.maxTokens,
             model: profile.model,
             signal: controller.signal,
+            // D1：旁路收集思考过程（不进入正文）
+            onChunk: (c) => {
+              if (c.thinking) thinkingAccum += c.thinking;
+            },
           },
           apiKey,
           profile.baseUrl,
@@ -301,19 +328,29 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
             break;
           }
           if (typeof result.value === 'string') {
-            accumulated += result.value;
+            rawAccum += result.value;
+            const { content, thinking } = ts.push(result.value);
+            contentAccum += content;
+            tagThinkingAccum += thinking;
             // 节流：每攒够一个 chunk 或 200ms 才写一次
-            const updated = { ...assistantMsg, content: accumulated };
+            const updated = {
+              ...assistantMsg,
+              content: contentAccum,
+              thinking: mergeThinking(thinkingAccum, tagThinkingAccum) || undefined,
+            };
             // 直接更新内存（不每次写 IndexedDB，太慢）；最后 done 时一次性 put
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantMsg.id ? updated : m)),
-            );
+            setMessages((prev) => prev.map((m) => (m.id === assistantMsg.id ? updated : m)));
           }
         }
 
+        // 收尾：处理未闭合标签
+        const flushed = ts.flush();
+        contentAccum += flushed.content;
+        tagThinkingAccum += flushed.thinking;
+
         // 最终持久化（含 Tool Call 解析 → ActionCard）
-        const parsed = parseToolCalls(accumulated);
-        const intent = classifyIntent(accumulated, text);
+        const parsed = parseToolCalls(contentAccum);
+        const intent = classifyIntent(contentAccum, text);
         setCurrentIntent(intent);
         emitChatEvent('chat_intent_detected', { intent });
 
@@ -330,7 +367,8 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
 
         const finalAssistant: ChatMessage = {
           ...assistantMsg,
-          content: parsed.textContent || accumulated,
+          content: parsed.textContent || contentAccum,
+          thinking: mergeThinking(thinkingAccum, tagThinkingAccum) || undefined, // D2：合并原生 thinking 与标签 thinking
           actionCard,
         };
         await chatSessionRepo.update(sessionId, {
@@ -359,7 +397,7 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
           setStatus('cancelled');
           emitChatEvent('chat_stream_interrupt', {
             durationMs: elapsed,
-            partialLength: accumulated.length,
+            partialLength: rawAccum.length,
           });
           aiCallLogRepo.create({
             modelProfileId: profile.id,
@@ -388,7 +426,7 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
         abortRef.current = null;
       }
     },
-    [store, activeSessionId, systemPromptProvider, refreshSessions, resolveActiveProfile],
+    [activeSessionId, systemPromptProvider, refreshSessions, resolveActiveProfile, profiles.length],
   );
 
   const cancel = useCallback(() => {
@@ -441,7 +479,7 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
     activeSessionId,
     mode,
     modelProfileId,
-    availableProfiles: store.profiles.map((p) => ({
+    availableProfiles: profiles.map((p) => ({
       id: p.id,
       name: p.name,
       provider: p.provider,
@@ -456,6 +494,8 @@ export function useAIChat(systemPromptProvider: (ctx: ChatContext) => string): U
     setMode,
     setModelProfileId,
     appendAssistantMessage,
+    appendAssistantCard,
+    updateAssistantPlan,
     refreshSessions,
     sessions,
   };

@@ -18,6 +18,8 @@ import TemplatePreviewCard from './cards/TemplatePreviewCard';
 import DataQueryCard from './cards/DataQueryCard';
 import UnknownToolCard from './cards/UnknownToolCard';
 import SuggestionCard from './cards/SuggestionCard';
+import ExecutionPlanCard from './cards/ExecutionPlanCard';
+import ExecutionStepResultCard from './cards/ExecutionStepResultCard';
 import TemplatePickerInChat from './TemplatePickerInChat';
 import type { ChatMessage as ChatMsg, ChatMode, ID, ActionCard } from '@/types/domain';
 import type { ChatStatus } from '../hooks/useAIChat';
@@ -33,20 +35,32 @@ interface Props {
   onSend: (text: string) => void;
   onCancel: () => void;
   onModeChange?: (mode: ChatMode) => void;
+  /** PlanMode：当前是否处于计划模式。 */
+  planMode?: boolean;
+  /** PlanMode：点击输入框徽章退出计划模式。 */
+  onExitPlanMode?: () => void;
   /** ActionCard 按钮回调（ai-chat-create-content / ai-chat-smart-qa 接入）。 */
   onCardAction?: CardAction;
   /** TemplatePicker 选择模板后发送 user 消息。 */
   onTemplatePick?: (templateName: string) => void;
   /** 当前是否展示模板选择器（仅在 blog_preview 且无 templateId 时显示）。 */
   showTemplatePicker?: boolean;
+  /** PlanMode：步骤状态切换（更新会话内卡片 + 持久化）。 */
+  onPlanStepToggle?: (planId: ID, stepId: ID, status: 'todo' | 'doing' | 'done') => void;
+  /** PlanMode：在「执行 B」新对话执行该计划。 */
+  onPlanRunInB?: (planId: ID) => void;
 }
 
 function ActionCardRenderer({
   card,
   onAction,
+  onPlanStepToggle,
+  onPlanRunInB,
 }: {
   card: ActionCard;
   onAction?: CardAction;
+  onPlanStepToggle?: (planId: ID, stepId: ID, status: 'todo' | 'doing' | 'done') => void;
+  onPlanRunInB?: (planId: ID) => void;
 }): JSX.Element | null {
   const stub: CardAction = onAction ?? ((c, a) => console.log('[待接入]', a, c));
 
@@ -78,10 +92,28 @@ function ActionCardRenderer({
           onCancel={() => stub(card, 'cancel')}
         />
       );
+    case 'execution_plan':
+      return (
+        <ExecutionPlanCard
+          plan={card.data}
+          onConfirm={() => stub(card, 'confirm')}
+          onModify={() => stub(card, 'modify')}
+          onToggleStep={(stepId, status) => onPlanStepToggle?.(card.data.id, stepId, status)}
+          onRunInB={() => onPlanRunInB?.(card.data.id)}
+        />
+      );
     case 'data_query':
       return <DataQueryCard tool={card.tool} filter={card.filter} />;
     case 'suggestion':
       return <SuggestionCard data={card.data} />;
+    case 'execution_step_result':
+      return (
+        <ExecutionStepResultCard
+          stepOrder={card.data.stepOrder}
+          title={card.data.title}
+          result={card.data.result}
+        />
+      );
     case 'unknown':
       return <UnknownToolCard rawTool={card.rawTool} rawData={card.rawData} />;
   }
@@ -96,9 +128,13 @@ export default function ChatPanel({
   onSend,
   onCancel,
   onModeChange,
+  planMode,
+  onExitPlanMode,
   onCardAction,
   onTemplatePick,
   showTemplatePicker,
+  onPlanStepToggle,
+  onPlanRunInB,
 }: Props): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -149,7 +185,12 @@ export default function ChatPanel({
             <div key={m.id}>
               <ChatMessage message={m} />
               {m.actionCard && (
-                <ActionCardRenderer card={m.actionCard} onAction={onCardAction} />
+                <ActionCardRenderer
+                  card={m.actionCard}
+                  onAction={onCardAction}
+                  onPlanStepToggle={onPlanStepToggle}
+                  onPlanRunInB={onPlanRunInB}
+                />
               )}
             </div>
           ))
@@ -186,8 +227,10 @@ export default function ChatPanel({
       <ChatInput
         status={status}
         mode={mode}
+        planMode={planMode}
         onSend={onSend}
         onCancel={onCancel}
+        onExitPlanMode={onExitPlanMode}
       />
     </div>
   );

@@ -21,6 +21,7 @@ import type {
 import { AppError } from './types';
 import { newId } from '@/lib/id';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 
 const throwNotFound = (id: ID): never => {
   const payload: AppErrorPayload = {
@@ -123,7 +124,16 @@ export class ChatSessionRepo implements ChatSessionRepository {
 
   async delete(id: ID): Promise<void> {
     await requireSession(this.db, id);
-    await this.db.chatSessions.delete(id);
+    await this.db.transaction(
+      'rw',
+      this.db.chatSessions,
+      this.db.tombstones,
+      async () => {
+        await this.db.chatSessions.delete(id);
+        // 物理删除 + 写墓碑
+        await this.db.tombstones.put(makeTombstone('chatSessions', id));
+      },
+    );
   }
 
   /**

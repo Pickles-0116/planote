@@ -239,6 +239,7 @@ async function migrateBlogTagIds(): Promise<number> {
           color: autoColor(tagCount),
           usageCount: 0,
           createdAt: now,
+          updatedAt: now,
         };
         await db.tags.add(newTag);
         tagByName.set(lowerName, tagId);

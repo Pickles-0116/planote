@@ -25,8 +25,8 @@ export class ClaudeAdapter implements AIProviderAdapter {
   ): AsyncGenerator<string, StreamUsage | void, unknown> {
     const url = `${baseUrl || PROVIDER_BASE_URLS.claude}/messages`;
 
-    // Claude 格式：system 消息提取到顶层
-    const systemMsg = messages.find((m) => m.role === 'system');
+    // Claude 格式：所有 system 消息提取到顶层 body.system（D2：保留 queryInterceptor 注入的数据查询结果）
+    const systemMsgs = messages.filter((m) => m.role === 'system');
     const nonSystemMsgs = messages.filter((m) => m.role !== 'system');
 
     const body: Record<string, unknown> = {
@@ -36,7 +36,8 @@ export class ClaudeAdapter implements AIProviderAdapter {
       temperature: options.temperature,
       stream: true,
     };
-    if (systemMsg) body.system = systemMsg.content;
+    const systemContent = systemMsgs.map((m) => m.content).join('\n\n');
+    if (systemContent) body.system = systemContent;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -79,8 +80,14 @@ export class ClaudeAdapter implements AIProviderAdapter {
           try {
             const json = JSON.parse(data);
             if (json.type === 'content_block_delta') {
-              const text = json.delta?.text;
-              if (text) yield text;
+              const d = json.delta;
+              // D1：思考过程 delta（Claude extended thinking）旁路收集
+              if (d.type === 'thinking' && d.thinking) {
+                if (options.onChunk) options.onChunk({ thinking: d.thinking });
+              } else if (d.type === 'text' && d.text) {
+                if (options.onChunk) options.onChunk({ content: d.text });
+                yield d.text;
+              }
             } else if (json.type === 'message_delta') {
               const usage = json.usage;
               if (usage) {

@@ -13,12 +13,13 @@
  * - 其余字段直接 bulkPut
  *
  * 模式：
- * - 'merge'：直接 bulkPut，id 冲突新数据胜
- * - 'replace'：先 clear() 7 张表，再 bulkPut
+ * - 'merge'：直接 bulkPut，id 冲突新数据胜；并撤销被导入 id 上的旧删除意图
+ * - 'replace'：先 clear() 7 张业务表 + 墓碑/变更队列，再 bulkPut
  */
 
 import { db } from '@/db';
-import type { Plan, Item, Blog, Tag, Attachment, Framework } from '@/types/domain';
+import type { ID, Plan, Item, Blog, Tag, Attachment, Framework } from '@/types/domain';
+import type { SyncableTableName } from '@/db/sync';
 import type { MetaRow } from '@/db/schema';
 import { EXPORT_VERSION, type ExportPayload } from './dexieExport';
 
@@ -116,12 +117,36 @@ export async function dexieImport(
   const frameworks = data.frameworks as Framework[];
   const meta = data.meta as MetaRow[];
 
+  // 同步边界：被导入的记录若在本地留有「删除意图」（墓碑 / 待推送的 delete 变更），
+  // 下次同步会把刚导入的同 id 记录再删一次（跨设备「导入即被回滚」）。
+  // replace 模式整表清空即可；merge 模式只按导入的 id 精确撤销删除意图，
+  // 以保留其它记录尚未推送的变更（见 design.md §4.5 删除传播）。
+  const importedKeys: Array<[SyncableTableName, ID]> = [
+    ...plans.map((r): [SyncableTableName, ID] => ['plans', r.id]),
+    ...items.map((r): [SyncableTableName, ID] => ['items', r.id]),
+    ...blogs.map((r): [SyncableTableName, ID] => ['blogs', r.id]),
+    ...tags.map((r): [SyncableTableName, ID] => ['tags', r.id]),
+    ...restoredAttachments.map((r): [SyncableTableName, ID] => ['attachments', r.id]),
+    ...frameworks.map((r): [SyncableTableName, ID] => ['frameworks', r.id]),
+  ];
+
   let clearedTables = 0;
   await db.transaction(
     'rw',
-    [db.plans, db.items, db.blogs, db.tags, db.attachments, db.frameworks, db.meta],
+    [
+      db.plans,
+      db.items,
+      db.blogs,
+      db.tags,
+      db.attachments,
+      db.frameworks,
+      db.meta,
+      db.tombstones,
+      db.changeQueue,
+    ],
     async () => {
       if (mode === 'replace') {
+        // 一并清空墓碑与变更队列，避免导入后残留旧墓碑误删新导入数据
         await Promise.all([
           db.plans.clear(),
           db.items.clear(),
@@ -130,8 +155,21 @@ export async function dexieImport(
           db.attachments.clear(),
           db.frameworks.clear(),
           db.meta.clear(),
+          db.tombstones.clear(),
+          db.changeQueue.clear(),
         ]);
         clearedTables = REQUIRED_TABLES.length;
+      } else if (importedKeys.length > 0) {
+        // merge：撤销被导入 id 上的旧墓碑与待推送删除
+        await db.tombstones
+          .where('[table+recordId]')
+          .anyOf(importedKeys)
+          .delete();
+        await db.changeQueue
+          .where('recordId')
+          .anyOf(importedKeys.map(([, id]) => id))
+          .filter((c) => c.op === 'delete')
+          .delete();
       }
       await Promise.all([
         db.plans.bulkPut(plans),

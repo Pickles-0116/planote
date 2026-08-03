@@ -79,6 +79,7 @@ export async function reconcileTags(db: PlanoteDB): Promise<ReconcileResult> {
       color: '#64748B',
       usageCount: 0,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     // 同步写入两张查找表，避免同批次重复创建
     tagById.set(tag.id, tag);

@@ -29,6 +29,7 @@ const PROVIDER_LABELS: Record<AIProvider, string> = {
   openai: 'OpenAI',
   claude: 'Claude',
   qwen: '通义千问',
+  minimax: 'MiniMax',
   custom: '自定义',
 };
 
@@ -36,6 +37,7 @@ const BASE_URL_PLACEHOLDERS: Record<AIProvider, string> = {
   openai: 'https://api.openai.com/v1（留空用默认，或填代理地址）',
   claude: 'https://api.anthropic.com（留空用默认，或填 MiniMax 等代理）',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  minimax: 'https://api.minimaxi.com/v1（留空用默认，已预置）',
   custom: 'https://your-api.com/v1',
 };
 
@@ -290,7 +292,7 @@ export default function ModelConfigPanel() {
           <div>
             <label className="text-xs text-brand-500 dark:text-stone-400 mb-1 block">服务商</label>
             <div className="flex gap-2">
-              {(['openai', 'claude', 'qwen', 'custom'] as AIProvider[]).map((prov) => (
+              {(['openai', 'claude', 'qwen', 'minimax', 'custom'] as AIProvider[]).map((prov) => (
                 <button
                   key={prov}
                   onClick={() => {

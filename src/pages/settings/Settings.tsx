@@ -10,6 +10,7 @@ import {
   Palette,
   Database,
   Bot,
+  Cloud,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -18,8 +19,9 @@ import DataSettings from './DataSettings';
 import ModelConfigPanel from '@/features/ai/components/ModelConfigPanel';
 import CallStatsPanel from '@/features/ai/components/CallStatsPanel';
 import DataInspector from '@/features/settings/components/DataInspector';
+import CloudSyncSettings from './CloudSyncSettings';
 
-type SettingsKey = 'theme' | 'ai' | 'data';
+type SettingsKey = 'theme' | 'ai' | 'data' | 'sync';
 
 interface NavItem {
   key: SettingsKey;
@@ -31,12 +33,14 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'theme', label: '主题', icon: Palette },
   { key: 'ai', label: 'AI 模型', icon: Bot },
   { key: 'data', label: '数据', icon: Database },
+  { key: 'sync', label: '云同步', icon: Cloud },
 ];
 
 const HASH_TO_KEY: Record<string, SettingsKey> = {
   theme: 'theme',
   ai: 'ai',
   data: 'data',
+  sync: 'sync',
 };
 
 function getInitialKey(): SettingsKey {
@@ -83,7 +87,7 @@ export default function Settings(): JSX.Element {
             设置
           </h1>
           <p className="text-xs text-brand-500 dark:text-stone-400 mt-1">
-            主题 · AI · 数据
+            主题 · AI · 数据 · 云同步
           </p>
         </div>
         <ul className="space-y-1">
@@ -125,6 +129,7 @@ export default function Settings(): JSX.Element {
           </div>
         )}
         {activeKey === 'data' && <DataSettings />}
+        {activeKey === 'sync' && <CloudSyncSettings />}
 
         {/* 调试区块：始终显示，让用户直观确认 IndexedDB 数据状态 */}
         <DataInspector />

@@ -17,6 +17,7 @@ import type {
 import { AppError } from './types';
 import { newId } from '@/lib/id';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 
 const nowISO = (): ISODate => new Date().toISOString();
 
@@ -52,6 +53,7 @@ export class TagRepo implements TagRepository {
       id: newId(),
       usageCount: 0,
       createdAt: nowISO(),
+      updatedAt: nowISO(),
     };
     try {
       await this.db.tags.add(tag);
@@ -78,7 +80,7 @@ export class TagRepo implements TagRepository {
       }
     }
 
-    const merged = { ...existing, ...patch, id } as Tag;
+    const merged = { ...existing, ...patch, id, updatedAt: nowISO() } as Tag;
     await this.db.tags.put(merged);
     return merged;
   }
@@ -92,6 +94,7 @@ export class TagRepo implements TagRepository {
       this.db.tags,
       this.db.plans,
       this.db.blogs,
+      this.db.tombstones,
       async () => {
         // 1. 从所有 Plan 的 tagIds 移除
         const relatedPlans = await this.db.plans
@@ -119,8 +122,9 @@ export class TagRepo implements TagRepository {
           });
         }
 
-        // 3. 删 tag
+        // 3. 删 tag + 写墓碑（物理删除 + 墓碑传播，见 design.md §4.5）
         await this.db.tags.delete(id);
+        await this.db.tombstones.put(makeTombstone('tags', id));
       },
     );
   }

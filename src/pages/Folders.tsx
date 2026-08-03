@@ -25,10 +25,12 @@ import {
   List as ListIcon,
   Newspaper,
   Plus,
+  Sparkles,
   X,
 } from 'lucide-react';
 import FolderTree from '@/features/folders/components/FolderTree';
 import AddBlogDrawer from '@/features/folders/components/AddBlogDrawer';
+import SkillPickPanel from '@/features/skills/components/SkillPickPanel';
 import { useFolders, getFolderPath, toFolderMap } from '@/features/folders/hooks/useFolders';
 import { useFolderActions } from '@/features/folders/hooks/useFolderActions';
 import { ROOT_FOLDER_ID, ROOT_FOLDER_NAME } from '@/features/folders/constants';
@@ -46,6 +48,29 @@ export default function FoldersPage(): JSX.Element {
 
   // 「添加博客」抽屉开关
   const [addOpen, setAddOpen] = useState<boolean>(false);
+
+  // v1.3-fix T12：多选 → AI 总结
+  const [selectedBlogIds, setSelectedBlogIds] = useState<Set<ID>>(new Set());
+  const [panelOpen, setPanelOpen] = useState<boolean>(false);
+  const MAX_SELECT = 10;
+
+  const toggleSelect = useCallback((id: ID): void => {
+    setSelectedBlogIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        if (next.size >= MAX_SELECT) {
+          window.alert(`最多同时选择 ${MAX_SELECT} 篇博客`);
+          return prev;
+        }
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedBlogIds(new Set()), []);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const initialId = (searchParams.get('folderId') as ID | null) ?? ROOT_FOLDER_ID;
@@ -322,50 +347,110 @@ export default function FoldersPage(): JSX.Element {
           {/* 博客卡片 */}
           {folderBlogs.length > 0 ? (
             blogView === 'grid' ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 animate-fadeUp">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 animate-fadeUp">
                 {folderBlogs.map((b) => (
-                  <div key={b.id} className="relative group">
-                    <BlogCard
-                      blog={b}
-                      density="grid"
-                      framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
-                    />
-                    {b.folderId !== ROOT_FOLDER_ID && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveBlog(b.id)}
-                        title="移出此文件夹（变为未分类）"
-                        aria-label={`将「${b.title}」移出此文件夹`}
-                        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 pointer-events-none group-hover:pointer-events-auto flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full bg-white/95 dark:bg-stone-800/95 border border-stone-200 dark:border-stone-600 text-brand-400 hover:text-red-500 hover:border-red-200 dark:hover:border-red-800 transition shadow-sm"
-                      >
-                        <X size={12} />
-                        移出
-                      </button>
+                  <div
+                    key={b.id}
+                    className={cn(
+                      'relative rounded-2xl transition',
+                      selectedBlogIds.has(b.id) && 'ring-2 ring-brand-900/60 dark:ring-brand-400/60',
                     )}
+                  >
+                    <label
+                      className={cn(
+                        'absolute left-3 top-3 z-20 flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition',
+                        selectedBlogIds.has(b.id)
+                          ? 'border-brand-900 bg-brand-900 text-white dark:border-brand-400 dark:bg-brand-400 dark:text-stone-900'
+                          : 'border-stone-300 bg-white/90 hover:border-brand-900 dark:border-stone-600 dark:bg-stone-800/90',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedBlogIds.has(b.id)}
+                        onChange={() => toggleSelect(b.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="sr-only"
+                        aria-label={`选择「${b.title}」`}
+                      />
+                      {selectedBlogIds.has(b.id) && (
+                        <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={3}>
+                          <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </label>
+                    <div className="relative group">
+                      <BlogCard
+                        blog={b}
+                        density="grid"
+                        framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
+                      />
+                      {b.folderId !== ROOT_FOLDER_ID && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveBlog(b.id)}
+                          title="移出此文件夹（变为未分类）"
+                          aria-label={`将「${b.title}」移出此文件夹`}
+                          className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 pointer-events-none group-hover:pointer-events-auto flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full bg-white/95 dark:bg-stone-800/95 border border-stone-200 dark:border-stone-600 text-brand-400 hover:text-red-500 hover:border-red-200 dark:hover:border-red-800 transition shadow-sm"
+                        >
+                          <X size={12} />
+                          移出
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="space-y-2 animate-fadeUp">
                 {folderBlogs.map((b) => (
-                  <div key={b.id} className="relative group">
-                    <BlogCard
-                      blog={b}
-                      density="list"
-                      framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
-                    />
-                    {b.folderId !== ROOT_FOLDER_ID && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveBlog(b.id)}
-                        title="移出此文件夹（变为未分类）"
-                        aria-label={`将「${b.title}」移出此文件夹`}
-                        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 pointer-events-none group-hover:pointer-events-auto flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full bg-white/95 dark:bg-stone-800/95 border border-stone-200 dark:border-stone-600 text-brand-400 hover:text-red-500 hover:border-red-200 dark:hover:border-red-800 transition shadow-sm"
-                      >
-                        <X size={12} />
-                        移出
-                      </button>
+                  <div
+                    key={b.id}
+                    className={cn(
+                      'relative rounded-xl transition',
+                      selectedBlogIds.has(b.id) && 'ring-2 ring-brand-900/60 dark:ring-brand-400/60',
                     )}
+                  >
+                    <label
+                      className={cn(
+                        'absolute left-2 top-1/2 z-20 flex h-5 w-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded border transition',
+                        selectedBlogIds.has(b.id)
+                          ? 'border-brand-900 bg-brand-900 text-white dark:border-brand-400 dark:bg-brand-400 dark:text-stone-900'
+                          : 'border-stone-300 bg-white/90 hover:border-brand-900 dark:border-stone-600 dark:bg-stone-800/90',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedBlogIds.has(b.id)}
+                        onChange={() => toggleSelect(b.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="sr-only"
+                        aria-label={`选择「${b.title}」`}
+                      />
+                      {selectedBlogIds.has(b.id) && (
+                        <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={3}>
+                          <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </label>
+                    <div className="relative group">
+                      <BlogCard
+                        blog={b}
+                        density="list"
+                        framework={templateMap.get(b.templateId ?? b.frameworkId ?? '') ?? undefined}
+                      />
+                      {b.folderId !== ROOT_FOLDER_ID && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveBlog(b.id)}
+                          title="移出此文件夹（变为未分类）"
+                          aria-label={`将「${b.title}」移出此文件夹`}
+                          className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 pointer-events-none group-hover:pointer-events-auto flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full bg-white/95 dark:bg-stone-800/95 border border-stone-200 dark:border-stone-600 text-brand-400 hover:text-red-500 hover:border-red-200 dark:hover:border-red-800 transition shadow-sm"
+                        >
+                          <X size={12} />
+                          移出
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -393,6 +478,38 @@ export default function FoldersPage(): JSX.Element {
         blogs={blogs ?? []}
         folders={folders ?? []}
         onAdd={handleAddBlog}
+      />
+
+      {/* v1.3-fix T12：多选操作条（已选 > 0 时出现） */}
+      {selectedBlogIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-2xl bg-brand-900 px-5 py-3 text-white shadow-2xl dark:bg-stone-800">
+          <span className="text-sm whitespace-nowrap">
+            已选 <b className="font-semibold">{selectedBlogIds.size}</b> 篇
+          </span>
+          <button
+            type="button"
+            onClick={() => setPanelOpen(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-brand-900 transition hover:bg-stone-100 dark:text-stone-900"
+          >
+            <Sparkles size={14} />
+            AI 总结
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            aria-label="取消选择"
+            className="flex items-center gap-1 rounded-lg p-1.5 text-brand-200 transition hover:bg-white/10 hover:text-white"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* v1.3-fix T12：Skill 总结面板（复用同一组件） */}
+      <SkillPickPanel
+        open={panelOpen}
+        blogIds={[...selectedBlogIds]}
+        onClose={() => setPanelOpen(false)}
       />
     </div>
   );

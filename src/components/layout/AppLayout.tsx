@@ -48,9 +48,9 @@ export default function AppLayout() {
             <Outlet />
           </main>
         ) : (
-          // 其他页：标准 max-w-7xl 居中布局
+          // 其他页：填满主区，仅保留合理边距
           <main className="flex-1 overflow-y-auto scrollbar-thin">
-            <div className="max-w-7xl mx-auto px-8 py-8 text-brand-900 dark:text-stone-100">
+            <div className="w-full px-6 py-6 lg:px-8 lg:py-8 text-brand-900 dark:text-stone-100">
               <Outlet />
             </div>
           </main>

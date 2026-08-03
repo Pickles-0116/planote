@@ -17,6 +17,7 @@ import type {
 import { AppError } from './types';
 import { newId } from '@/lib/id';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 
 const nowISO = (): ISODate => new Date().toISOString();
 
@@ -73,9 +74,27 @@ export class CollectionRepo implements CollectionRepository {
 
   async delete(id: ID): Promise<void> {
     await requireCollection(this.db, id);
-    // 级联删除关联记录
-    await this.db.collectionItems.where('collectionId').equals(id).delete();
-    await this.db.collections.delete(id);
+    // 级联删除的关联记录（用于写墓碑）
+    const cascadedItems = await this.db.collectionItems
+      .where('collectionId')
+      .equals(id)
+      .toArray();
+    await this.db.transaction(
+      'rw',
+      this.db.collections,
+      this.db.collectionItems,
+      this.db.tombstones,
+      async () => {
+        // 级联删除关联记录
+        await this.db.collectionItems.where('collectionId').equals(id).delete();
+        await this.db.collections.delete(id);
+        // 写墓碑（收藏夹 + 其关联记录，见 design.md §4.5）
+        await this.db.tombstones.put(makeTombstone('collections', id));
+        for (const it of cascadedItems) {
+          await this.db.tombstones.put(makeTombstone('collectionItems', it.id));
+        }
+      },
+    );
   }
 
   async reorder(ids: ID[]): Promise<void> {
@@ -103,9 +122,23 @@ export class CollectionRepo implements CollectionRepository {
   }
 
   async removeItem(collectionId: ID, entityId: ID): Promise<void> {
-    await this.db.collectionItems
+    // 先取将被删除的关联记录，用于写墓碑（跨设备删除传播，见 design.md §4.5）
+    const toDelete = await this.db.collectionItems
       .filter((item) => item.collectionId === collectionId && item.entityId === entityId)
-      .delete();
+      .toArray();
+    await this.db.transaction(
+      'rw',
+      this.db.collectionItems,
+      this.db.tombstones,
+      async () => {
+        await this.db.collectionItems
+          .filter((item) => item.collectionId === collectionId && item.entityId === entityId)
+          .delete();
+        for (const it of toDelete) {
+          await this.db.tombstones.put(makeTombstone('collectionItems', it.id));
+        }
+      },
+    );
   }
 
   async getItems(collectionId: ID, entityType?: CollectionEntityType): Promise<CollectionItem[]> {

@@ -13,7 +13,7 @@
 import type { ChatMode, ChatIntent } from '@/types/domain';
 
 /** Prompt 版本号。每次调优递增。 */
-export const CHAT_SYSTEM_PROMPT_VERSION = 'v1.0.1';
+export const CHAT_SYSTEM_PROMPT_VERSION = 'v1.1.0';
 
 export interface BuildPromptOpts {
   mode: ChatMode;
@@ -76,6 +76,13 @@ export function buildChatSystemPrompt(opts: BuildPromptOpts): string {
 
 如果意图不明确，请直接询问用户确认。${intentTagHint}
 
+## 思考过程
+
+- 所有内部推理、分析、权衡必须包在 \`<thinking>\` 和 \`</thinking>\` 之间，且必须闭合。
+- \`<intent>\` 标记必须放在回复第一行；\`<thinking>\` 段紧跟在 \`<intent>\` 之后。
+- \`<thinking>\` 内不得出现 \`\`\`tool_call\`\`\` 代码块。
+- 标签之外只放最终给用户看的正文，不要把英文思考过程直接铺在外面。
+
 ## 输出格式
 
 - 普通回复使用 Markdown 格式
@@ -126,3 +133,32 @@ export function buildChatSystemPrompt(opts: BuildPromptOpts): string {
 前端会自动拦截并提供计算后的统计数据。
 ${modeGuidance}`;
 }
+
+/**
+ * PlanMode（执行计划模式）System Prompt（v1.3-fix F3）
+ *
+ * 约束 AI 在 /plan 模式下只输出 `execution_plan` tool_call：
+ * - 步骤 3~7 条；type 白名单 query|summarize|create_blog|create_template|create_plan|skill|custom
+ * - skill 型步骤必须带 toolData.skillId（引用不到技能则退化为 custom）
+ * - 禁止输出 get_* 等读取系统数据的 tool（/plan 只规划、不执行）
+ */
+export const PLAN_MODE_SYSTEM_PROMPT = `你是 Planote 的执行计划助手。Planote 是一个桌面端的目标管理 + 博客写作应用（local-first，数据存储在用户本地 IndexedDB）。
+
+## PlanMode（执行计划模式）
+
+当用户输入 /plan 或明确要求"先规划"时：
+1. 分析用户需求，列出 3-7 个步骤。
+2. 每一步必须包含 title（一句话）、type（白名单：query|summarize|create_blog|create_template|create_plan|skill|custom）。
+3. 若某步需要调用某个技能，type 用 skill 且必须带 toolData:{"skillId":"sk_xxx"}；引用不到技能就退化为 custom。
+4. 用如下格式输出，不要输出其他内容：
+\`\`\`tool_call
+{"tool":"execution_plan","data":{"title":"...","description":"...","steps":[{"title":"...","type":"query"},{"title":"...","type":"skill","toolData":{"skillId":"sk_xxx"}}]}}
+\`\`\`
+5. 禁止在 /plan 模式下调用 get_blogs/get_plans 等读取系统数据的 tool（只规划，不执行）。
+
+## 思考过程
+
+- 所有内部推理、分析、权衡必须包在 \`<thinking>\` 和 \`</thinking>\` 之间，且必须闭合。
+- 若需要意图标记，\`<intent>\` 放在第一行，\`<thinking>\` 紧跟其后。
+- \`<thinking>\` 内不得出现 \`\`\`tool_call\`\`\` 代码块。
+- 标签之外只放最终给用户看的正文。`

@@ -77,6 +77,8 @@ export const toDexieFramework = (preset: PresetFramework): Framework => ({
     placeholder: s.placeholder,
   })),
   useCount: 0,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
   builtin: true,
 });
 

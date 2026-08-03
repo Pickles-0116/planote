@@ -10,6 +10,7 @@ import { OpenAIAdapter } from './OpenAIAdapter';
 import { ClaudeAdapter } from './ClaudeAdapter';
 import { QwenAdapter } from './QwenAdapter';
 import { CustomAdapter } from './CustomAdapter';
+import { MiniMaxAdapter } from './MiniMaxAdapter';
 
 /** 单例缓存（避免重复构造）。 */
 const cache = new Map<string, AIProviderAdapter>();
@@ -30,6 +31,9 @@ export function getAdapter(provider: AIProvider): AIProviderAdapter {
         break;
       case 'custom':
         adapter = new CustomAdapter();
+        break;
+      case 'minimax':
+        adapter = new MiniMaxAdapter();
         break;
       default:
         throw new Error(`Unknown AI provider: ${provider}`);

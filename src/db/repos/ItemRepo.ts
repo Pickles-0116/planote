@@ -20,6 +20,7 @@ import { newId } from '@/lib/id';
 import { computeProgress } from '@/shared/utils/progress';
 import { computeUrgency } from '@/shared/utils/urgency';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 import { createPlanRepo, type PlanRepo } from './PlanRepo';
 
 const nowISO = (): ISODate => new Date().toISOString();
@@ -136,8 +137,12 @@ export class ItemRepo implements ItemRepository {
   async delete(id: ID): Promise<void> {
     const item = await requireItem(this.db, id);
     const planId = item.planId;
-    await this.db.items.delete(id);
-    // 触发 recomputeProgress（删除未勾选事项 progress 会变化）
+    // 物理删除 + 写墓碑（同一事务；recomputeProgress 另开事务，避免嵌套）
+    await this.db.transaction('rw', this.db.items, this.db.tombstones, async () => {
+      await this.db.items.delete(id);
+      await this.db.tombstones.put(makeTombstone('items', id));
+    });
+    // 触发 recomputeProgress（删除后事项 progress 会变化）
     await this.planRepoFactory(this.db).recomputeProgress(planId);
   }
 

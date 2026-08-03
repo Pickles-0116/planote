@@ -58,6 +58,18 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
     phase !== 'analyzing' &&
     phase !== 'generating';
 
+  // D3：可见校验 —— 把"为什么不能生成"变成用户看得懂的提示
+  const topicLen = topic.trim().length;
+  const topicValid = topicLen >= 10 && topicLen <= 200;
+  const disabledReason =
+    !canGenerate
+      ? topicValid
+        ? selectedBlogIds.length < 1
+          ? '请至少选择 1 篇参考博客'
+          : '生成中…'
+        : '新博客主题至少需要 10 字'
+      : undefined;
+
   const handleGenerate = useCallback(async () => {
     if (!canGenerate || !blogs) return;
     cancelledRef.current = false;
@@ -161,7 +173,14 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
           placeholder="输入主题（10-200 字）"
           className="w-full rounded-xl border border-stone-200 dark:border-stone-600 bg-white dark:bg-stone-700 text-sm text-stone-800 dark:text-stone-200 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-900/20 placeholder:text-stone-300 dark:placeholder:text-stone-500"
         />
-        <p className="text-[11px] text-stone-400 mt-1 text-right">{topic.length} / 200</p>
+        <p
+          className={cn(
+            'text-[11px] mt-1 text-right',
+            topicValid ? 'text-stone-400' : 'text-red-500',
+          )}
+        >
+          {topicLen} / 200（至少 10 字）
+        </p>
       </div>
 
       {/* 核心要点 */}
@@ -219,6 +238,7 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
         type="button"
         onClick={handleGenerate}
         disabled={!canGenerate}
+        title={disabledReason}
         className={cn(
           'w-full py-2.5 rounded-xl text-sm font-medium transition-colors',
           canGenerate
@@ -228,6 +248,10 @@ export default function ImitateGenerator({ editor }: Props): JSX.Element {
       >
         {phase === 'analyzing' || phase === 'generating' ? '生成中…' : '仿写生成'}
       </button>
+      {/* D3：按钮禁用时的原因提示（生成中/分析中不提示） */}
+      {!canGenerate && disabledReason && phase !== 'analyzing' && phase !== 'generating' && (
+        <p className="text-[11px] text-red-500 mt-1.5 text-right">{disabledReason}</p>
+      )}
     </div>
   );
 }

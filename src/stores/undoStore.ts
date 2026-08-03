@@ -15,6 +15,8 @@
 
 import { create } from 'zustand';
 import { db } from '@/db';
+import { makeTombstone } from '@/db/sync';
+import type { SyncableTableName } from '@/db/sync';
 
 const MAX_STACK = 20;
 
@@ -73,7 +75,18 @@ async function restoreSnapshot(
   target: 'before' | 'after',
 ): Promise<string[]> {
   const tbl = db.table(table);
+  const syncTable = table as SyncableTableName;
   const affectedPlanIds = new Set<string>();
+
+  // 撤销/重做会物理增删记录，必须同步维护墓碑，否则跨设备会「删除复活」或
+  // 「撤销后又被旧墓碑删掉」（见 design.md §4.5 删除传播）。
+  const dropRecord = async (id: string): Promise<void> => {
+    await tbl.delete(id);
+    await db.tombstones.put(makeTombstone(syncTable, id));
+  };
+  const reviveRecord = async (id: string): Promise<void> => {
+    await db.tombstones.where('[table+recordId]').equals([syncTable, id]).delete();
+  };
 
   // 目标状态：undo 用 before，redo 用 after
   const targets = target === 'before' ? before : after;
@@ -88,10 +101,11 @@ async function restoreSnapshot(
     if (t.data === null) {
       // before 为 null 表示操作前不存在（create 操作），undo 需删除
       // after 为 null 表示操作后不存在（delete 操作），redo 需删除
-      await tbl.delete(t.id);
+      await dropRecord(t.id);
     } else {
-      // 恢复数据
+      // 恢复数据（同时清掉该 id 的旧墓碑，避免撤销删除后又被同步删掉）
       await tbl.put({ ...t.data, id: t.id });
+      await reviveRecord(t.id);
       // 记录 planId 用于 progress 重算
       if (table === 'items' && t.data.planId) {
         affectedPlanIds.add(t.data.planId as string);
@@ -101,7 +115,7 @@ async function restoreSnapshot(
     // 处理对照侧有但目标侧没有的项
     if (o && o.data !== null && t.data === null) {
       // 对照侧存在但目标侧为 null → 需要删除
-      await tbl.delete(o.id);
+      await dropRecord(o.id);
     }
   }
 
@@ -135,7 +149,7 @@ export const useUndoStore = create<UndoStoreState>((set, get) => ({
     set({ isUndoRedoing: true });
 
     try {
-      await db.transaction('rw', [db.plans, db.items, db.blogs], async () => {
+      await db.transaction('rw', [db.plans, db.items, db.blogs, db.tombstones], async () => {
         await restoreSnapshot('plans', entry.plans.before, entry.plans.after, 'before');
         await restoreSnapshot('items', entry.items.before, entry.items.after, 'before');
         await restoreSnapshot('blogs', entry.blogs.before, entry.blogs.after, 'before');
@@ -144,7 +158,7 @@ export const useUndoStore = create<UndoStoreState>((set, get) => ({
       // 重算受影响的 plan progress
       for (const planId of entry.affectedPlanIds) {
         try {
-          await db.transaction('rw', [db.plans, db.items], async () => {
+          await db.transaction('rw', [db.plans, db.items, db.tombstones], async () => {
             const items = await db.items.where('planId').equals(planId).toArray();
             const total = items.length;
             const done = items.filter((i) => i.checked === true).length;
@@ -175,7 +189,7 @@ export const useUndoStore = create<UndoStoreState>((set, get) => ({
     set({ isUndoRedoing: true });
 
     try {
-      await db.transaction('rw', [db.plans, db.items, db.blogs], async () => {
+      await db.transaction('rw', [db.plans, db.items, db.blogs, db.tombstones], async () => {
         await restoreSnapshot('plans', entry.plans.before, entry.plans.after, 'after');
         await restoreSnapshot('items', entry.items.before, entry.items.after, 'after');
         await restoreSnapshot('blogs', entry.blogs.before, entry.blogs.after, 'after');
@@ -184,7 +198,7 @@ export const useUndoStore = create<UndoStoreState>((set, get) => ({
       // 重算受影响的 plan progress
       for (const planId of entry.affectedPlanIds) {
         try {
-          await db.transaction('rw', [db.plans, db.items], async () => {
+          await db.transaction('rw', [db.plans, db.items, db.tombstones], async () => {
             const items = await db.items.where('planId').equals(planId).toArray();
             const total = items.length;
             const done = items.filter((i) => i.checked === true).length;

@@ -149,6 +149,8 @@ export default function BlogEdit({ mode = 'create' }: BlogEditProps) {
       sections: selectedTemplate.sections,
       useCount: selectedTemplate.useCount,
       builtin: selectedTemplate.builtin,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
   }, [selectedTemplate]);
 

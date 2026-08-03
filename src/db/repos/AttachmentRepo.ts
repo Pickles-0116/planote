@@ -13,6 +13,7 @@ import type { AttachmentRepository, AppErrorPayload } from './types';
 import { AppError } from './types';
 import { newId } from '@/lib/id';
 import type { PlanoteDB } from '../schema';
+import { makeTombstone } from '../sync/tombstones';
 
 const nowISO = (): ISODate => new Date().toISOString();
 
@@ -52,7 +53,16 @@ export class AttachmentRepo implements AttachmentRepository {
   async delete(id: ID): Promise<void> {
     const a = await this.db.attachments.get(id);
     if (!a) throwNotFound(id);
-    await this.db.attachments.delete(id);
+    await this.db.transaction(
+      'rw',
+      this.db.attachments,
+      this.db.tombstones,
+      async () => {
+        await this.db.attachments.delete(id);
+        // 物理删除 + 写墓碑
+        await this.db.tombstones.put(makeTombstone('attachments', id));
+      },
+    );
   }
 
   async getBlob(id: ID): Promise<Blob> {
