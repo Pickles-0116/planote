@@ -181,19 +181,24 @@ export default function ChatPanel({
             )}
           </div>
         ) : (
-          messages.map((m) => (
-            <div key={m.id}>
-              <ChatMessage message={m} />
-              {m.actionCard && (
-                <ActionCardRenderer
-                  card={m.actionCard}
-                  onAction={onCardAction}
-                  onPlanStepToggle={onPlanStepToggle}
-                  onPlanRunInB={onPlanRunInB}
-                />
-              )}
-            </div>
-          ))
+          messages.map((m, i) => {
+            const isLast = i === messages.length - 1;
+            const isStreaming =
+              status === 'generating' && m.role === 'assistant' && isLast;
+            return (
+              <div key={m.id}>
+                <ChatMessage message={m} isStreaming={isStreaming} />
+                {m.actionCard && (
+                  <ActionCardRenderer
+                    card={m.actionCard}
+                    onAction={onCardAction}
+                    onPlanStepToggle={onPlanStepToggle}
+                    onPlanRunInB={onPlanRunInB}
+                  />
+                )}
+              </div>
+            );
+          })
         )}
 
         {/* 错误条：在消息流末尾也展示一次（即使有 messages） */}
