@@ -85,6 +85,19 @@ export default function NewBlogMenu() {
             />
           </div>
 
+          {/* 目录导入（含图片内联） */}
+          <div
+            onClick={handleClose}
+            data-menu-item="dir-import"
+          >
+            <ImportMarkdownButton
+              mode="directory"
+              variant="secondary"
+              label="导入目录（含图片）"
+              className="w-full justify-start px-4 py-2.5 rounded-none shadow-none"
+            />
+          </div>
+
           <div className="px-4 py-2 text-[10px] text-brand-400 dark:text-stone-500 bg-stone-50 dark:bg-stone-900/50">
             <Files size={10} className="inline mr-1" />
             支持 .md / .markdown / .txt，≤ 5MB / 个，可多选

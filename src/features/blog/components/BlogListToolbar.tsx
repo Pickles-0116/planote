@@ -103,9 +103,10 @@ export default function BlogListToolbar({
       {/* 显当前选项（与排序下拉平行的静态 label，便于无 hover 时也可读） */}
       <span className="text-xs text-brand-400 hidden md:inline">· {current.label}</span>
 
-      {/* 批量导入 .md */}
-      <div className="ml-auto">
+      {/* 批量导入 .md + 目录导入 */}
+      <div className="ml-auto flex items-center gap-2">
         <ImportMarkdownButton label="批量导入 .md" />
+        <ImportMarkdownButton mode="directory" label="导入目录" />
       </div>
     </div>
   );

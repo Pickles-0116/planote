@@ -17,6 +17,7 @@ import { useEffect } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import type { Editor } from '@tiptap/react';
 import type { TiptapJSON } from '@/types/domain';
@@ -78,6 +79,12 @@ export default function RichEditor({
         autolink: true,
         HTMLAttributes: {
           class: 'text-brand-900 underline underline-offset-2 hover:text-accent-500',
+        },
+      }),
+      Image.configure({
+        inline: false,
+        HTMLAttributes: {
+          class: 'max-w-full rounded-lg my-2',
         },
       }),
       Placeholder.configure({

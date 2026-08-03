@@ -36,6 +36,85 @@ import {
 
 const MAX_SIZE = 5_000_000; // 5MB（v1.1 提升：1MB → 5MB）
 const ALLOWED_EXT = /\.(md|markdown|txt)$/i;
+const IMAGE_EXT = /\.(svg|png|jpe?g|gif|webp|bmp|avif)$/i;
+
+/** 取 File 的 webkitRelativePath（目录选择时浏览器注入）。 */
+const getRelPath = (file: File): string =>
+  (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
+
+/** 判断是否图片文件。 */
+const isImageFile = (name: string): boolean => IMAGE_EXT.test(name);
+
+/** 把图片文件读成 data URL。SVG 用 utf8 编码（img 渲染最稳），其他用 base64。 */
+async function fileToDataURL(file: File): Promise<string> {
+  if (file.name.toLowerCase().endsWith('.svg')) {
+    const text = await file.text();
+    return `data:image/svg+xml;utf8,${encodeURIComponent(text)}`;
+  }
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error(`读取图片失败：${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * 把 Markdown 里的本地图片引用改写为 data URL（内联进正文）。
+ * - 远程（http/https）/ 已内联（data:）的 src 跳过。
+ * - 按图片完整相对路径优先配对，退一步用裸文件名。
+ * - 同一图片只读一次（按文件名缓存）。
+ */
+async function rewriteImageSources(
+  markdown: string,
+  mdRelPath: string,
+  imageIndex: Map<string, File>,
+): Promise<string> {
+  const mdDir = mdRelPath.includes('/')
+    ? mdRelPath.slice(0, mdRelPath.lastIndexOf('/') + 1)
+    : '';
+
+  // 收集所有本地 src
+  const localSrcs = new Set<string>();
+  let m: RegExpExecArray | null;
+  const probe = /!\[([^\]]*)\]\(([^)]+)\)/g;
+  while ((m = probe.exec(markdown)) !== null) {
+    const src = m[2];
+    if (!/^(https?:|data:)/i.test(src)) localSrcs.add(src);
+  }
+
+  if (localSrcs.size === 0) return markdown;
+
+  // 读取 data URL
+  const fileCache = new Map<string, string>(); // fileName → dataUrl
+  const srcToDataUrl = new Map<string, string>();
+  for (const src of localSrcs) {
+    const relSrc = src.replace(/^\.\//, '');
+    const fullKey = mdDir ? `${mdDir}${relSrc}` : relSrc;
+    const bareName = relSrc.split('/').pop() ?? relSrc;
+    const imgFile = imageIndex.get(fullKey) ?? imageIndex.get(bareName);
+    if (!imgFile) continue;
+
+    let dataUrl = fileCache.get(imgFile.name);
+    if (!dataUrl) {
+      try {
+        dataUrl = await fileToDataURL(imgFile);
+        fileCache.set(imgFile.name, dataUrl);
+      } catch {
+        continue;
+      }
+    }
+    srcToDataUrl.set(src, dataUrl);
+  }
+
+  if (srcToDataUrl.size === 0) return markdown;
+
+  // 同步替换
+  return markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (full, alt, src) => {
+    const dataUrl = srcToDataUrl.get(src);
+    return dataUrl ? `![${alt}](${dataUrl})` : full;
+  });
+}
 
 /** 单文件错误码（spec Requirement: 部分失败汇总）。 */
 export type ImportErrorCode =
@@ -66,6 +145,8 @@ export interface UseMarkdownImportResult {
   importFile: (file: File) => Promise<{ blogId?: string } | void>;
   /** 批量入口：串行处理 + 实时 toast，**不**跳转。 */
   importFiles: (files: File[]) => Promise<ImportResult>;
+  /** 目录导入入口：.md 与图片自动配对，图片以 data URL 内联进正文。 */
+  importFilesWithImages: (files: File[]) => Promise<ImportResult>;
   /** 重试单个失败文件。 */
   retryFile: (file: File) => Promise<{ blogId?: string } | void>;
 }
@@ -83,6 +164,8 @@ const toMB = (bytes: number): string => (bytes / 1_000_000).toFixed(1);
 const parseAndCreate = async (
   file: File,
   createBlog: ReturnType<typeof useBlogStore.getState>['createBlog'],
+  imageIndex?: Map<string, File>,
+  mdRelPath?: string,
 ): Promise<{ blogId: string; title: string }> => {
   // 1. 大小校验
   if (file.size > MAX_SIZE) {
@@ -128,6 +211,11 @@ const parseAndCreate = async (
       file,
     };
     throw err;
+  }
+
+  // 3.5 图片内联：把本地图片引用改写为 data URL
+  if (imageIndex && imageIndex.size > 0) {
+    markdown = await rewriteImageSources(markdown, mdRelPath ?? '', imageIndex);
   }
 
   // 4. 解析
@@ -277,5 +365,92 @@ export function useMarkdownImport(): UseMarkdownImportResult {
     [createBlog, push, pushFull, retryFile],
   );
 
-  return { importFile, importFiles, retryFile };
+  /** 目录导入入口：选目录后 .md 与图片自动配对，图片以 data URL 内联进正文。 */
+  const importFilesWithImages = useCallback(
+    async (files: File[]): Promise<ImportResult> => {
+      const mdFiles = files.filter((f) => ALLOWED_EXT.test(f.name));
+      const imageFiles = files.filter((f) => isImageFile(f.name));
+
+      // 建立图片索引：完整相对路径 + 裸文件名
+      const imageIndex = new Map<string, File>();
+      for (const f of imageFiles) {
+        const rel = getRelPath(f);
+        if (rel) imageIndex.set(rel, f);
+        imageIndex.set(f.name, f);
+      }
+
+      if (mdFiles.length === 0) {
+        push('error', '所选目录中没有 .md / .markdown / .txt 文件');
+        return { success: 0, failed: 0, errors: [] };
+      }
+
+      const imgCount = imageFiles.length;
+      push(
+        'info',
+        `开始导入目录：${mdFiles.length} 篇博客${imgCount > 0 ? ` · ${imgCount} 张图片自动内联` : ''}…`,
+      );
+
+      const result: ImportResult = { success: 0, failed: 0, errors: [] };
+      for (let i = 0; i < mdFiles.length; i++) {
+        const file = mdFiles[i]!;
+        push(
+          'info',
+          `(${i + 1}/${mdFiles.length}) 正在处理「${file.name}」(${formatSize(file.size)})`,
+        );
+        try {
+          await parseAndCreate(file, createBlog, imageIndex, getRelPath(file));
+          result.success += 1;
+          push('success', `(${i + 1}/${mdFiles.length}) 「${file.name}」导入成功`);
+        } catch (err) {
+          const e = err as ImportError;
+          if (e && typeof e === 'object' && 'code' in e) {
+            result.failed += 1;
+            result.errors.push(e);
+            pushFull({
+              kind: 'error',
+              message: e.message,
+              sticky: true,
+              details: [
+                {
+                  message: `文件大小: ${formatSize(e.file.size)} · ${e.code}`,
+                  action: {
+                    label: '重试',
+                    onClick: () => {
+                      void retryFile(e.file);
+                    },
+                  },
+                },
+              ],
+            });
+          } else {
+            result.failed += 1;
+            const message = `导入「${file.name}」失败：${(err as Error).message ?? '未知错误'}`;
+            result.errors.push({
+              filename: file.name,
+              code: 'CREATE_FAILED',
+              message,
+              file,
+            });
+            push('error', message);
+          }
+        }
+      }
+
+      if (result.failed === 0) {
+        push(
+          'success',
+          `目录导入完成 · 成功 ${result.success} 篇${imgCount > 0 ? ` · ${imgCount} 张图片已内联` : ''}`,
+        );
+      } else {
+        push(
+          'info',
+          `目录导入完成 · 成功 ${result.success} 篇 · 失败 ${result.failed} 篇`,
+        );
+      }
+      return result;
+    },
+    [createBlog, push, pushFull, retryFile],
+  );
+
+  return { importFile, importFiles, importFilesWithImages, retryFile };
 }

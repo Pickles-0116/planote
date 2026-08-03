@@ -15,12 +15,14 @@ import { marked } from 'marked';
 import { generateJSON } from '@tiptap/html';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+import Image from '@tiptap/extension-image';
 import type { TiptapJSON } from '@/types/editor';
 
 /** 与 RichEditor.tsx 保持一致的 extensions（避免解析后编辑器渲染差异）。 */
 const EXTENSIONS = [
   StarterKit,
   Link.configure({ openOnClick: false, autolink: true }),
+  Image,
 ];
 
 /**

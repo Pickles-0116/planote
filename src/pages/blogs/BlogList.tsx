@@ -255,6 +255,7 @@ export default function BlogList(): JSX.Element {
             写新博客
           </button>
           <ImportMarkdownButton label="批量导入 .md" />
+          <ImportMarkdownButton mode="directory" label="导入目录" />
         </div>
       </div>
     );
