@@ -21,7 +21,7 @@ import type { Folder, ID } from '@/types/domain';
 import { ROOT_FOLDER_ID, ROOT_FOLDER_NAME } from '@/features/folders/constants';
 import { cn } from '@/lib/utils';
 import { useFolderActions } from '../hooks/useFolderActions';
-import { buildFolderTree, type FolderNode } from '../hooks/useFolders';
+import { buildFolderTree, useFolderBlogCountMap, type FolderNode } from '../hooks/useFolders';
 
 interface Props {
   folders: Folder[];
@@ -31,10 +31,11 @@ interface Props {
 
 export default function FolderTree({ folders, selectedId, onSelect }: Props): JSX.Element {
   const { createFolder, renameFolder, deleteFolder, moveFolder } = useFolderActions();
+  const blogCountMap = useFolderBlogCountMap();
   const [dragId, setDragId] = useState<ID | null>(null);
   const [dropTargetId, setDropTargetId] = useState<ID | null>(null);
 
-  const tree = buildFolderTree(folders);
+  const tree = buildFolderTree(folders, blogCountMap);
 
   const handleAddRoot = async (): Promise<void> => {
     const name = window.prompt('新建文件夹名称：', '新文件夹');

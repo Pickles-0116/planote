@@ -9,13 +9,41 @@
  * 文件夹数据仅通过 `folderRepo` 访问（架构约束：features 禁止直连 db）。
  */
 
+import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { folderRepo } from '@/db/repos';
+import { useBlogs } from '@/stores/hooks/useBlogs';
 import type { Folder, ID } from '@/types/domain';
 
 /** 订阅全部文件夹（按 depth → order 排序）。首帧返回 undefined。 */
 export function useFolders(): Folder[] | undefined {
   return useLiveQuery<Folder[]>(() => folderRepo.list(), []);
+}
+
+/**
+ * 派生 folderId → 直属博客数 的实时映射（V1.2-fix：取代 `Folder.blogCount` 缓存）。
+ *
+ * 侧边栏 / 文件夹树节点上的博客计数以前读 `folders.blogCount` 缓存字段，
+ * 该字段由 `FolderRepo.bumpBlogCount` 在每个写博客入口手动维护，
+ * 漏一处即失真（如 AI Chat 保存草稿、撤销栈、历史迁移）。现改为订阅 `blogs`
+ * 表实时聚合，**从源头消除缓存与真实必须保持一致的隐性约束**。
+ *
+ * 口径：`blog.folderId === folder.id` 计为该文件夹的直属博客（与 `Folders.tsx`
+ * 里 `folderBlogs = blogs.filter(b => b.folderId === id)` 完全一致，不含子文件夹）。
+ *
+ * @returns 首帧 blogs 未就绪时返回 undefined —— 调用方回退读缓存字段，避免闪 0。
+ */
+export function useFolderBlogCountMap(): Map<ID, number> | undefined {
+  const blogs = useBlogs();
+  return useMemo(() => {
+    if (!blogs) return undefined;
+    const m = new Map<ID, number>();
+    for (const b of blogs) {
+      const key = b.folderId ?? '';
+      m.set(key, (m.get(key) ?? 0) + 1);
+    }
+    return m;
+  }, [blogs]);
 }
 
 /** folderId → Folder 映射。 */
@@ -35,11 +63,22 @@ export interface FolderNode extends Folder {
 /**
  * 由扁平文件夹列表构建树（root.parentId === '' 为根）。
  * 每个节点按 order 升序；深度深的在父节点 children 中。
+ *
+ * @param blogCountMap 可选：由 `useFolderBlogCountMap` 派生的实时计数映射。
+ *   传入时节点 `blogCount` 以实时值为准（缓存失真自动回正）；不传则回退读
+ *   `folder.blogCount` 缓存字段（用于 blogs 尚未就绪的首帧，避免闪 0）。
  */
-export function buildFolderTree(folders: Folder[]): FolderNode[] {
+export function buildFolderTree(
+  folders: Folder[],
+  blogCountMap?: Map<ID, number>,
+): FolderNode[] {
   const nodes = new Map<ID, FolderNode>();
   for (const f of folders) {
-    nodes.set(f.id, { ...f, children: [] });
+    const node: FolderNode = { ...f, children: [] };
+    if (blogCountMap) {
+      node.blogCount = blogCountMap.get(f.id) ?? 0;
+    }
+    nodes.set(f.id, node);
   }
 
   const roots: FolderNode[] = [];

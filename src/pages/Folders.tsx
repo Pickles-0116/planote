@@ -126,6 +126,19 @@ export default function FoldersPage(): JSX.Element {
     return blogs.filter((b) => b.folderId === effectiveId);
   }, [blogs, effectiveId]);
 
+  // V1.2-fix：folderId → 直属博客数 实时映射，取代 folder.blogCount 缓存
+  // （缓存由写入口手动维护、漏一处即失真；派生口径与 folderBlogs 一致）
+  const folderBlogCountMap = useMemo<Map<ID, number>>(() => {
+    const m = new Map<ID, number>();
+    if (blogs) {
+      for (const b of blogs) {
+        const key = b.folderId ?? '';
+        m.set(key, (m.get(key) ?? 0) + 1);
+      }
+    }
+    return m;
+  }, [blogs]);
+
   const templateMap = useMemo(() => {
     const m = new Map<string, BlogTemplate>();
     if (templates) {
@@ -299,7 +312,7 @@ export default function FoldersPage(): JSX.Element {
                       {f.name}
                     </div>
                     <div className="text-xs text-brand-400 dark:text-stone-500">
-                      {f.blogCount ?? 0} 篇
+                      {folderBlogCountMap.get(f.id) ?? 0} 篇
                     </div>
                   </div>
                   <ChevronRight size={16} className="text-brand-300 group-hover:text-brand-500 transition" />

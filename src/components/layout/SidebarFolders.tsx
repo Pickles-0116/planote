@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { Folder as FolderIcon, FolderPlus, ChevronDown, ChevronRight } from 'lucide-react';
 import {
   useFolders,
+  useFolderBlogCountMap,
   buildFolderTree,
   type FolderNode,
 } from '@/features/folders/hooks/useFolders';
@@ -31,10 +32,11 @@ const MAX_INDENT_DEPTH = 3;
 export default function SidebarFolders(): JSX.Element {
   const navigate = useNavigate();
   const folders = useFolders();
+  const blogCountMap = useFolderBlogCountMap();
   const { createFolder } = useFolderActions();
   const [collapsed, setCollapsed] = useState<boolean>(false);
 
-  const tree = buildFolderTree(folders ?? []);
+  const tree = buildFolderTree(folders ?? [], blogCountMap);
 
   // 在 root 下新建一个主文件夹（与 FolderTree.handleAddRoot 保持一致）
   const handleCreateMain = useCallback(async (): Promise<void> => {
