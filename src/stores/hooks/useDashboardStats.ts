@@ -1,11 +1,12 @@
 /**
  * useDashboardStats - Dashboard 4 个数字卡派生
  *
- * 派生规则（详见 add-data-binding-dashboard/design.md §3.1）：
+ * 派生规则（详见 add-data-binding-dashboard/design.md §3.1，梓浩 2026-08-03 调整）：
  * - monthlyCompletionRate：所有 plan 的 `progress` 平均值（planRepo 已缓存）
  * - activePlans         ：status !== 'done' && status !== 'paused' 的 plan 数
  * - completedItems      ：v1.0 简化为「已完成的计划数」（streak 算法留到 v1.1）
- * - publishedBlogs      ：status === 'published' 的 blog 数
+ * - totalBlogs          ：全部 blog 数（含 draft/published/archived，不再只统计 published——
+ *                         导入与 AI 草稿默认 draft，只统计 published 会让卡片恒为 0 与用户预期不符）
  *
  * 注意：useLiveQuery 返回 `T | undefined`；本 hook 在输入任一未就绪时返回 undefined。
  * 用 useMemo 包裹避免每次渲染重算。
@@ -23,8 +24,8 @@ export interface DashboardStats {
   activePlans: number;
   /** v1.0 简化为「已完成的计划数」。streak 算法留到 v1.1 仪表盘增强。 */
   completedItems: number;
-  /** 已发布博客数。 */
-  publishedBlogs: number;
+  /** 博客总数（含所有状态）。 */
+  totalBlogs: number;
 }
 
 export function useDashboardStats(): DashboardStats | undefined {
@@ -43,7 +44,9 @@ export function computeStats(plans: Plan[], blogs: Blog[]): DashboardStats {
     (p) => p.status !== 'done' && p.status !== 'paused',
   ).length;
 
-  const publishedBlogs = blogs.filter((b) => b.status === 'published').length;
+  // 全部博客（含 draft/published/archived）。只统计 published 会导致导入/AI 草稿恒不显示，
+  // 与用户「我传了多少博客」的预期不符（梓浩，2026-08-03）。
+  const totalBlogs = blogs.length;
 
   // 本月完成率：所有 plan 的 progress 字段平均值（已由 PlanRepo.recomputeProgress 缓存）
   const monthlyCompletionRate =
@@ -61,6 +64,6 @@ export function computeStats(plans: Plan[], blogs: Blog[]): DashboardStats {
     monthlyCompletionRate,
     activePlans,
     completedItems,
-    publishedBlogs,
+    totalBlogs,
   };
 }

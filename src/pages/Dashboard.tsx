@@ -332,11 +332,11 @@ export default function Dashboard() {
           delayClass="animate-delay-100"
         />
         <StatCard
-          label="已发布博客"
-          value={String(stats.publishedBlogs)}
+          label="博客总数"
+          value={String(stats.totalBlogs)}
           icon={PenLine}
           color="purple"
-          badge="本月"
+          badge="累计"
           delayClass="animate-delay-150"
         />
       </div>
@@ -411,7 +411,7 @@ export default function Dashboard() {
                 to="/blogs/new"
                 className="block text-center py-10 text-sm text-brand-500 dark:text-stone-400 hover:text-brand-900 dark:hover:text-stone-100 transition"
               >
-                还没有发布的博客，去写一篇 →
+                还没有博客，去写一篇 →
               </Link>
             ) : (
               <div className="grid grid-cols-3 gap-4">

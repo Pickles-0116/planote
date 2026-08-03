@@ -1,8 +1,9 @@
 /**
  * useRecentBlogs - 最近博客 section 数据
  *
- * 派生规则（详见 add-data-binding-dashboard/design.md）：
- * - 过滤：status === 'published'
+ * 派生规则（详见 add-data-binding-dashboard/design.md §3.3，梓浩 2026-08-03 调整）：
+ * - 过滤：无（含 draft/published/archived 全部博客——只显示 published 会导致
+ *   导入/AI 草稿在「最近博客」区永远为空，与「博客总数」卡片口径不一致）
  * - 排序：publishedAt desc（publishedAt 缺失时降级用 updatedAt）
  * - 截取：前 `limit` 条（默认 3）
  *
@@ -25,7 +26,7 @@ export function useRecentBlogs(limit: number = 3): Blog[] | undefined {
 /** 纯函数，便于单测。 */
 export function pickRecentBlogs(blogs: Blog[], limit: number): Blog[] {
   return blogs
-    .filter((b) => b.status === 'published')
+    .slice()
     .sort((a, b) => {
       // publishedAt 优先；缺失时降级到 updatedAt
       const aTime = a.publishedAt ?? a.updatedAt;
