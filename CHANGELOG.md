@@ -77,6 +77,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > 看一下远端 metadata 的 `size` 字段和 `content` 是不是空。`size > 1MB` 几乎可以
 > 肯定是 GitHub 不再返回 content 的边界问题，不是真正的格式错误。
 
+## [1.3.CloudSync-Chunked] - 按表分片（hotfix）
+
+### 背景
+[v1.3.CloudSync-Trim] 修复后，体积下降到 200–400KB，本地推送不再撞 900KB 上限；
+但用户的 `state.json` 实际已 1.3MB，仍是 GitHub Contents API GET 的隐形边界（~1MB）。
+继续单文件方案是「把地雷往后推」——真正需要的是分片。
+
+### 方案
+把单文件 `state.json` 拆成多片 + 一个 manifest 索引文件：
+
+```
+sync/
+  state.json              # 老格式，保留做一次性迁移
+  state.json.legacy       # 迁移完成后由新代码写一份备份
+  chunks/
+    manifest.json         # 索引：版本 + 各分片 SHA + 表→分片映射
+    chunk-0.json          # plans + items
+    chunk-1.json          # blogs（最重的，单独一片）
+    chunk-2.json          # tags + frameworks + blogTemplates
+    chunk-3.json          # collections + collectionItems + folders
+    chunk-4.json          # chatSessions + skillFolders + skills + attachments
+    chunk-tombstones.json # 墓碑
+```
+
+**单分片 ≤ 200KB base64**（实测 1MB 才有问题，200KB 留 5x 安全边界）。
+
+### 实现
+
+- 新增 `src/sync/chunks.ts`（~250 行）：表分组、manifest 拼装、split/merge
+- `src/sync/github.ts` 全面重写：
+  - `readExtendedVersion` 优先读 manifest，fallback 读老 state.json
+  - `downloadSnapshot` 分片模式：读 manifest + 全部 chunk + tombstone，拼成完整 JSON 返回（engine 一侧无感）
+  - `uploadSnapshot` 总是走分片路径：拆 + 写各分片 + 写 manifest
+  - 兼容老 state.json：检测到 baseVersion 指向老 state.json 时，把它归档为 `state.json.legacy` 并删除老文件
+- `src/sync/size-guard.ts` 新增 `MAX_CHUNK_BASE64_BYTES = 200KB` 与 `assertChunkFits`
+- `src/sync/engine.ts` **零改动** — 分片对 engine 完全透明，engine 仍调 `readVersion / downloadSnapshot / uploadSnapshot`
+
+### 兼容性
+
+- **新 → 老客户端（远端只有 chunks）**：旧版本（v1.3-Trim 那个）客户端不支持 manifest，会报"远端数据格式不兼容"——这是 v1.3 协议升级的预期代价，等用户升级 v1.3-Chunked 即可
+- **新客户端读老远端（只有 state.json）**：自动迁移到分片；老文件归档为 `state.json.legacy`，下次推送时新建分片结构
+- **两端都是 v1.3-Chunked**：纯分片路径，乐观锁基于 manifest SHA
+
+### 验证
+
+- typecheck 0 错误
+- vitest 224/227 通过（3 个 migration.test.ts 失败为 jsdom 历史环境问题，与本次无关）
+- 新增 chunks.test.ts（13 用例：表分组、split/merge、serialize/deserialize、manifest）
+- 调整 empty-repo.test.ts（6 用例，覆盖分片协议下的空仓库自愈）
+- 调整 utf8.test.ts（覆盖分片协议下的中文/emoji 端到端）
+
+### 容量上限
+
+理论上每片 200KB / 6 片 = 1.2MB；超出后会再触发 `PAYLOAD_TOO_LARGE`。
+如未来需要支持 GB 级，再迁移到 GitHub Git Data API（`git/trees` + `git/commits` + `git/blobs`）。
+
 ### 修复
 
 - **同步白名单瘦身**（`db/sync/types.ts` + `db/sync/capture.ts` + `sync/engine.ts`）

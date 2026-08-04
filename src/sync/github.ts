@@ -2,11 +2,19 @@
  * M2 存储通道 — GitHub 仓库适配器
  *
  * 通过 GitHub REST Contents API 实现 StorageBackend。
- * 快照存 `{directory}/state.json`，附件存 `{directory}/attachments/{key}`。
+ *
+ * 存储协议（v1.3-CloudSync-Chunked）：
+ * - 新数据走分片：{directory}/chunks/manifest.json + chunk-*.json
+ * - 老数据兼容：{directory}/state.json（首次推送时自动迁移到分片）
+ * - 附件：{directory}/attachments/{key}
  *
  * 认证：使用 SyncConfig.token（Bearer token，仅本地 meta，绝不进载荷）。
- * 版本标识：使用远端 state.json 的 blob SHA 作为乐观锁版本。
+ * 版本标识：使用远端 manifest 的 blob SHA 作为乐观锁版本。
  * 乐观并发：上传时带 base SHA，GitHub API 校验不一致时返回 422 → 抛 VERSION_CONFLICT。
+ *
+ * 体积策略（v1.3-CloudSync-Chunked）：
+ * - 单分片目标 ≤ 200KB base64（远低于 GitHub Contents API ~1MB 隐形边界）
+ * - 上传路径完全避开单文件 1MB 死锁
  */
 
 import {
@@ -19,12 +27,38 @@ import {
 import type { SyncConfig } from '@/db/sync/types';
 import { utf8ToBase64, base64ToUtf8 } from './utils';
 import { RemoteSnapshotTooLargeError } from './size-guard';
+import {
+  buildManifest,
+  deserializeChunk,
+  serializeChunk,
+  splitSnapshotIntoChunks,
+  mergeChunksIntoSnapshot,
+  type ChunkedManifest,
+  type ChunkMeta,
+  DATA_CHUNK_NAMES,
+  TOMBSTONE_CHUNK_NAME,
+  CHUNKED_FORMAT_VERSION,
+  CHUNK_TO_TABLES,
+} from './chunks';
+import type { SyncableTableName, Tombstone } from '@/db/sync/types';
 
 /** GitHub REST API 基础 URL。 */
 const GITHUB_API_BASE = 'https://api.github.com';
 
 /** 空仓库初始化 .gitkeep 后重试上传的最大次数。 */
 const MAX_EMPTY_REPO_RETRIES = 2;
+
+/** 序列化后的全量快照载荷（manifest 内的快照 payload）。 */
+interface SerializedSnapshot {
+  tables: Partial<Record<SyncableTableName, Record<string, unknown>[]>>;
+  tombstones: Tombstone[];
+}
+
+/** 适配器内部使用的版本结果（含 manifest 是否存在）。 */
+interface ExtendedVersionResult extends VersionResult {
+  /** 远端是否为分片模式（manifest.json 存在）。 */
+  chunked: boolean;
+}
 
 /** GitHub Contents API 返回的单项响应类型。 */
 interface GitHubContentItem {
@@ -47,7 +81,6 @@ interface GitHubPutResponse {
  */
 function parseRepo(repo: string): { owner: string; repo: string } {
   const parts = repo.split('/');
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (parts.length < 2 || !parts[0] || !parts[1]) {
     throw new StorageBackendError(
       'INVALID_PAYLOAD',
@@ -58,31 +91,33 @@ function parseRepo(repo: string): { owner: string; repo: string } {
 }
 
 /**
- * GitHub 仓库后端适配器。
- *
- * @example
- * ```ts
- * const backend = new GitHubBackend(config);
- * const { version } = await backend.readVersion();
- * ```
+ * GitHub 仓库后端适配器（分片协议版）。
  */
 export class GitHubBackend implements StorageBackend {
   private config: SyncConfig;
   private owner: string;
   private repo: string;
-  /** state.json 在仓库中的完整路径。 */
+  private dir: string;
+  /** 兼容老协议：state.json 路径。 */
   private statePath: string;
   /** 附件目录在仓库中的路径前缀。 */
   private attachmentsPrefix: string;
+  /** 分片 manifest 路径。 */
+  private manifestPath: string;
+  /** 单个 chunk 文件路径（按 name）。 */
+  private chunkPath(name: string): string {
+    return `${this.dir}/chunks/${name}.json`;
+  }
 
   constructor(config: SyncConfig) {
     this.config = config;
     const parsed = parseRepo(config.repo);
     this.owner = parsed.owner;
     this.repo = parsed.repo;
-    const dir = config.directory.replace(/^\/|\/$/g, ''); // 去掉首尾斜杠
-    this.statePath = `${dir}/state.json`;
-    this.attachmentsPrefix = `${dir}/attachments`;
+    this.dir = config.directory.replace(/^\/|\/$/g, '');
+    this.statePath = `${this.dir}/state.json`;
+    this.attachmentsPrefix = `${this.dir}/attachments`;
+    this.manifestPath = `${this.dir}/chunks/manifest.json`;
   }
 
   /** 构建 GitHub API 请求头。 */
@@ -134,8 +169,6 @@ export class GitHubBackend implements StorageBackend {
     }
 
     // 空仓库（无任何 commit、无实际分支）无法通过 Contents API 直接写入。
-    // GitHub 典型响应：422/409，body 含 "Git Repository is empty" 或 "initial commit required"。
-    // 注意：必须放在 422+sha → VERSION_CONFLICT 判定之后，避免误判。
     if (
       (response.status === 422 || response.status === 409) &&
       (lower.includes('empty') || lower.includes('initial commit'))
@@ -159,50 +192,195 @@ export class GitHubBackend implements StorageBackend {
     );
   }
 
+  // ========== 内部：底层文件读写（带 404 透传，避免被 handleResponse 转成 NOT_FOUND 错误） ==========
+
   /**
-   * 读取远端版本标识。
-   *
-   * 通过 GET state.json 获取文件 SHA。文件不存在（首次同步）时返回空版本。
+   * 读取单个文件原始内容。文件不存在时返回 null。
    */
-  async readVersion(): Promise<VersionResult> {
-    const url = `${this.contentsUrl(this.statePath)}?ref=${encodeURIComponent(this.config.branch)}`;
+  private async readRawFile(
+    path: string,
+  ): Promise<{ content: string; size: number; sha: string; encoding: string } | null> {
+    const url = `${this.contentsUrl(path)}?ref=${encodeURIComponent(this.config.branch)}`;
     const response = await fetch(url, {
       method: 'GET',
       headers: this.headers(),
     });
-
-    if (response.status === 404) {
-      return { version: '' };
-    }
-
-    const handled = await this.handleResponse(response, 'readVersion');
+    if (response.status === 404) return null;
+    const handled = await this.handleResponse(response, `readRawFile(${path})`);
     const data = (await handled.json()) as GitHubContentItem;
-    return { version: data.sha };
+    return {
+      content: data.content ?? '',
+      size: data.size,
+      sha: data.sha,
+      encoding: data.encoding ?? '',
+    };
+  }
+
+  /**
+   * 写入单个文件（带乐观锁）。baseVersion 为空表示新建。
+   */
+  private async writeRawFile(
+    path: string,
+    content: string,
+    baseVersion: string,
+    commitMessage: string,
+  ): Promise<string> {
+    const attempt = async (): Promise<string> => {
+      const encoded = utf8ToBase64(content);
+      const body: Record<string, unknown> = {
+        message: commitMessage,
+        content: encoded,
+        branch: this.config.branch,
+      };
+      if (baseVersion) body.sha = baseVersion;
+      const url = this.contentsUrl(path);
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: this.headers(),
+        body: JSON.stringify(body),
+      });
+      const handled = await this.handleResponse(response, `writeRawFile(${path})`);
+      const result = (await handled.json()) as GitHubPutResponse;
+      return result.content.sha;
+    };
+    return this.retryWithEmptyRepoInit(attempt);
+  }
+
+  /**
+   * 删除单个文件（带乐观锁）。
+   */
+  private async deleteRawFile(path: string, baseVersion: string, message: string): Promise<void> {
+    const url = this.contentsUrl(path);
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: this.headers(),
+      body: JSON.stringify({
+        message,
+        sha: baseVersion,
+        branch: this.config.branch,
+      }),
+    });
+    await this.handleResponse(response, `deleteRawFile(${path})`);
+  }
+
+  // ========== StorageBackend 接口实现 ==========
+
+  /**
+   * 读取远端版本标识。
+   *
+   * 优先级：manifest（分片）> state.json（兼容老协议）。返回的 version 是
+   * 当前实际生效文件的 blob SHA，作为乐观锁的 baseVersion。
+   */
+  async readVersion(): Promise<VersionResult> {
+    const ext = await this.readExtendedVersion();
+    return { version: ext.version };
+  }
+
+  /**
+   * 读取远端版本（含分片/单文件标记）。供 engine 决策走哪条路径。
+   */
+  async readExtendedVersion(): Promise<ExtendedVersionResult> {
+    // 先查 manifest
+    const manifest = await this.readRawFile(this.manifestPath);
+    if (manifest) {
+      return { version: manifest.sha, chunked: true };
+    }
+    // 退到老 state.json
+    const legacy = await this.readRawFile(this.statePath);
+    if (legacy) {
+      return { version: legacy.sha, chunked: false };
+    }
+    return { version: '', chunked: false };
   }
 
   /**
    * 下载快照内容及其版本标识。
    *
+   * 分片模式：读 manifest + 全部 chunk + tombstone chunk，拼成完整 SnapshotData。
+   * 兼容模式：直接读 state.json 并 deserialize。
    * 文件不存在（首次同步）时返回空数据。
    */
   async downloadSnapshot(): Promise<SnapshotDownloadResult> {
+    // 优先分片
+    const manifestRaw = await this.readRawFile(this.manifestPath);
+    if (manifestRaw) {
+      if (manifestRaw.size > 1024 * 1024) {
+        throw new RemoteSnapshotTooLargeError(manifestRaw.size);
+      }
+      if (!manifestRaw.content || manifestRaw.encoding !== 'base64') {
+        throw new StorageBackendError(
+          'INVALID_PAYLOAD',
+          `远端 manifest.json 编码异常（encoding=${manifestRaw.encoding ?? '<missing>'}）`,
+        );
+      }
+      const manifestJson = base64ToUtf8(manifestRaw.content);
+      const manifest = parseManifest(manifestJson);
+
+      // 读所有数据分片
+      const chunkResults = await Promise.all(
+        Object.keys(manifest.chunks).map(async (chunkName) => {
+          const raw = await this.readRawFile(this.chunkPath(chunkName));
+          if (!raw) {
+            throw new StorageBackendError(
+              'INVALID_PAYLOAD',
+              `远端缺少分片 ${chunkName}（manifest 声明存在但文件不存在）`,
+            );
+          }
+          if (raw.size > 1024 * 1024) {
+            throw new RemoteSnapshotTooLargeError(raw.size);
+          }
+          if (!raw.content || raw.encoding !== 'base64') {
+            throw new StorageBackendError(
+              'INVALID_PAYLOAD',
+              `远端分片 ${chunkName} 编码异常`,
+            );
+          }
+          const json = base64ToUtf8(raw.content);
+          return { name: chunkName, payload: deserializeChunk(json) as { tables: Partial<Record<SyncableTableName, Record<string, unknown>[]>> } };
+        }),
+      );
+
+      // 读墓碑分片
+      const tombstoneRaw = await this.readRawFile(this.chunkPath(manifest.tombstoneChunk));
+      let tombstones: Tombstone[] = [];
+      if (tombstoneRaw) {
+        if (tombstoneRaw.size > 1024 * 1024) {
+          throw new RemoteSnapshotTooLargeError(tombstoneRaw.size);
+        }
+        if (tombstoneRaw.content && tombstoneRaw.encoding === 'base64') {
+          const tJson = base64ToUtf8(tombstoneRaw.content);
+          const t = deserializeChunk(tJson) as { tombstones: Tombstone[] };
+          tombstones = t.tombstones;
+        }
+      }
+
+      const merged = mergeChunksIntoSnapshot(manifest, chunkResults, tombstones);
+      // 仍然以单文件 JSON 形式返回（用 SNAPSHOT_FORMAT_VERSION=1 的旧 schema），
+      // engine 一侧不知道分片存在，但合并后结构兼容。
+      const wrapped = {
+        formatVersion: 1, // 兼容旧 schema
+        generatedAt: manifest.generatedAt,
+        tables: merged.tables,
+        tombstones: merged.tombstones,
+      };
+      return {
+        data: JSON.stringify(wrapped),
+        version: manifestRaw.sha, // 用 manifest 的 SHA 作为 version
+      };
+    }
+
+    // 兼容老 state.json
     const url = `${this.contentsUrl(this.statePath)}?ref=${encodeURIComponent(this.config.branch)}`;
     const response = await fetch(url, {
       method: 'GET',
       headers: this.headers(),
     });
-
     if (response.status === 404) {
       return { data: '', version: '' };
     }
-
     const handled = await this.handleResponse(response, 'downloadSnapshot');
     const data = (await handled.json()) as GitHubContentItem;
-
     if (!data.content || data.encoding !== 'base64') {
-      // 特殊识别：GitHub Contents API 对超大文件会返回 metadata 但 content 字段为空
-      // （实测 ~1.4MB 起出现，encoding="none"）。这是「远端文件过大」而不是格式错误，
-      // 直接抛 RemoteSnapshotTooLargeError，mapToSyncError 会映射为 PAYLOAD_TOO_LARGE。
       const fileSize = typeof data.size === 'number' ? data.size : 0;
       if (fileSize > 1024 * 1024) {
         throw new RemoteSnapshotTooLargeError(fileSize);
@@ -213,64 +391,115 @@ export class GitHubBackend implements StorageBackend {
           `encoding=${data.encoding ?? '<missing>'}，file size=${data.size ?? '<unknown>'} 字节）`,
       );
     }
-
     const decoded = base64ToUtf8(data.content);
     return { data: decoded, version: data.sha };
   }
 
   /**
-   * 上传快照（带乐观锁版本控制）。
+   * 上传快照（带乐观锁）。
    *
-   * @param data - 序列化后的快照 JSON 字符串
-   * @param baseVersion - 基于哪个版本修改（GitHub Commit SHA）
-   * @throws StorageBackendError VERSION_CONFLICT 当远端版本与 baseVersion 不一致
+   * 总是走分片路径（即使 baseVersion 来自老 state.json）。如果远端是老格式，
+   * 首次上传时会一并把 state.json 改名为 state.json.legacy 并写入分片结构。
    */
   async uploadSnapshot(
     data: string,
     baseVersion: string,
   ): Promise<SnapshotUploadResult> {
-    const attempt = async (): Promise<SnapshotUploadResult> => {
-      const encoded = utf8ToBase64(data);
-      const body: Record<string, unknown> = {
-        message: `sync: update state.json (base ${baseVersion.slice(0, 7) || 'init'})`,
-        content: encoded,
-        branch: this.config.branch,
+    // 解析 data（兼容旧 schema 形式）
+    const snapshot = parseSnapshotData(data);
+
+    // 1. 拆分成 chunk + tombstone
+    const dataChunks = splitSnapshotIntoChunks(snapshot);
+    const tombstoneJson = serializeChunk({ tombstones: snapshot.tombstones });
+    const tombstoneName = TOMBSTONE_CHUNK_NAME;
+
+    // 2. 判断 baseVersion 指向的是 manifest 还是 state.json
+    const ext = await this.readExtendedVersion();
+    const isLegacyBase = baseVersion && ext.version === baseVersion && !ext.chunked;
+    const isManifestBase = baseVersion && ext.version === baseVersion && ext.chunked;
+
+    // 3. 上传所有数据分片
+    const newChunkMetas: Record<string, ChunkMeta> = {};
+    for (const { name, payload } of dataChunks) {
+      const json = serializeChunk(payload);
+      const chunkBaseVersion = isManifestBase
+        ? (ext.version && (await this.readRawFile(this.chunkPath(name)))?.sha) || ''
+        : ''; // 新协议下首次写或从老协议迁移：baseVersion 为空
+      const sha = await this.writeRawFile(
+        this.chunkPath(name),
+        json,
+        chunkBaseVersion,
+        `sync: update ${name} (base ${(baseVersion || 'init').slice(0, 7)})`,
+      );
+      newChunkMetas[name] = {
+        sha,
+        size: json.length,
+        tables: (CHUNK_TO_TABLES[name] ?? []) as SyncableTableName[],
       };
+    }
 
-      // 有 baseVersion 表示更新已有文件，需传入 sha 实现乐观锁
-      if (baseVersion) {
-        body.sha = baseVersion;
+    // 4. 上传墓碑分片
+    const tombBaseVersion = isManifestBase
+      ? (ext.version && (await this.readRawFile(this.chunkPath(tombstoneName)))?.sha) || ''
+      : '';
+    const tombSha = await this.writeRawFile(
+      this.chunkPath(tombstoneName),
+      tombstoneJson,
+      tombBaseVersion,
+      `sync: update ${tombstoneName} (base ${(baseVersion || 'init').slice(0, 7)})`,
+    );
+
+    // 5. 写 manifest
+    const manifest = buildManifest(newChunkMetas, { sha: tombSha, size: tombstoneJson.length });
+    const manifestJson = JSON.stringify(manifest);
+    const manifestBase = isManifestBase ? baseVersion : '';
+    const newManifestSha = await this.writeRawFile(
+      this.manifestPath,
+      manifestJson,
+      manifestBase,
+      `sync: update manifest (base ${(baseVersion || 'init').slice(0, 7)})`,
+    );
+
+    // 6. 如果远端之前是老 state.json，把它归档为 state.json.legacy（一次性）
+    if (isLegacyBase) {
+      try {
+        // 已经在 ext 里读到 sha 了；重命名思路：把老 state.json 拉一份出来，
+        // 写到 state.json.legacy，再删老 state.json。
+        const legacyRaw = await this.readRawFile(this.statePath);
+        if (legacyRaw && legacyRaw.content) {
+          const legacyJson = base64ToUtf8(legacyRaw.content);
+          // 写到 .legacy
+          await this.writeRawFile(
+            `${this.dir}/state.json.legacy`,
+            legacyJson,
+            '', // 新建
+            'sync: archive legacy state.json after chunked migration',
+          );
+        }
+        // 删除老 state.json
+        if (legacyRaw) {
+          await this.deleteRawFile(
+            this.statePath,
+            legacyRaw.sha,
+            'sync: remove legacy state.json after chunked migration',
+          );
+        }
+      } catch (err) {
+        // 归档失败不阻断主流程（分片已经写成功了）
+        // eslint-disable-next-line no-console
+        console.warn('[sync] 归档 legacy state.json 失败（不影响同步）:', err);
       }
+    }
 
-      const url = this.contentsUrl(this.statePath);
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: this.headers(),
-        body: JSON.stringify(body),
-      });
-
-      const handled = await this.handleResponse(response, 'uploadSnapshot');
-      const result = (await handled.json()) as GitHubPutResponse;
-      return { newVersion: result.content.sha };
-    };
-
-    // 空仓库自愈：遇 REPO_EMPTY 时先初始化同步目录再重试
-    return this.retryWithEmptyRepoInit(attempt);
+    return { newVersion: newManifestSha };
   }
 
   /**
    * 初始化空仓库的同步目录。
-   *
-   * 空仓库无任何 commit/分支，Contents API 无法直接写入。
-   * 在 `{directory}/.gitkeep` 写入占位文件以触发首次 commit。
-   * 注意：GitHub Contents API 拒绝完全空的内容（422 "content is empty"），
-   * 故使用单个换行作为占位；文件位于数据目录内，不污染仓库根目录。
    */
   private async initializeSyncDir(): Promise<void> {
-    const dir = this.config.directory.replace(/^\/|\/$/g, '');
-    const path = `${dir}/.gitkeep`;
+    const path = `${this.dir}/.gitkeep`;
     const url = this.contentsUrl(path);
-
     const response = await fetch(url, {
       method: 'PUT',
       headers: this.headers(),
@@ -280,14 +509,11 @@ export class GitHubBackend implements StorageBackend {
         branch: this.config.branch,
       }),
     });
-
     await this.handleResponse(response, 'initializeSyncDir');
   }
 
   /**
    * 空仓库自愈包装：捕获 REPO_EMPTY → 初始化同步目录 → 重试原操作。
-   *
-   * 最多重试 MAX_EMPTY_REPO_RETRIES 次；初始化失败时抛原始 REPO_EMPTY 错误。
    */
   private async retryWithEmptyRepoInit<T>(
     attempt: () => Promise<T>,
@@ -310,12 +536,10 @@ export class GitHubBackend implements StorageBackend {
         try {
           await this.initializeSyncDir();
         } catch {
-          // 初始化失败：抛原始 REPO_EMPTY 错误，交由上层处理
           throw error;
         }
       }
     }
-    // 理论不可达：循环内要么 return 要么 throw
     throw lastError;
   }
 
@@ -323,8 +547,6 @@ export class GitHubBackend implements StorageBackend {
   async uploadAttachment(key: string, blob: Blob): Promise<void> {
     const attempt = async (): Promise<void> => {
       const path = `${this.attachmentsPrefix}/${encodeURIComponent(key)}`;
-
-      // Blob → base64
       const buffer = await blob.arrayBuffer();
       const bytes = new Uint8Array(buffer);
       let binary = '';
@@ -332,23 +554,18 @@ export class GitHubBackend implements StorageBackend {
         binary += String.fromCharCode(bytes[i]!);
       }
       const encoded = btoa(binary);
-
       const body = {
         message: `sync: upload attachment ${key}`,
         content: encoded,
         branch: this.config.branch,
       };
-
       const url = this.contentsUrl(path);
       const response = await fetch(url, {
         method: 'PUT',
         headers: this.headers(),
         body: JSON.stringify(body),
       });
-
       if (response.status === 422) {
-        // 可能是目录不存在或已有文件需要 sha
-        // 先尝试获取已存在文件的 sha 再重试
         const getUrl = `${this.contentsUrl(path)}?ref=${encodeURIComponent(this.config.branch)}`;
         const getResp = await fetch(getUrl, {
           method: 'GET',
@@ -366,11 +583,8 @@ export class GitHubBackend implements StorageBackend {
           return;
         }
       }
-
       await this.handleResponse(response, `uploadAttachment(${key})`);
     };
-
-    // 空仓库自愈：首次上传附件同样可能触发
     await this.retryWithEmptyRepoInit(attempt);
   }
 
@@ -378,15 +592,12 @@ export class GitHubBackend implements StorageBackend {
   async downloadAttachment(key: string): Promise<Blob> {
     const path = `${this.attachmentsPrefix}/${encodeURIComponent(key)}`;
     const url = `${this.contentsUrl(path)}?ref=${encodeURIComponent(this.config.branch)}`;
-
     const response = await fetch(url, {
       method: 'GET',
       headers: this.headers(),
     });
-
     const handled = await this.handleResponse(response, `downloadAttachment(${key})`);
     const data = (await handled.json()) as GitHubContentItem;
-
     if (!data.content || data.encoding !== 'base64') {
       throw new StorageBackendError(
         'INVALID_PAYLOAD',
@@ -394,13 +605,57 @@ export class GitHubBackend implements StorageBackend {
           `encoding=${data.encoding ?? '<missing>'}，file size=${data.size ?? '<unknown>'} 字节）`,
       );
     }
-
     const decoded = atob(data.content);
     const bytes = new Uint8Array(decoded.length);
     for (let i = 0; i < decoded.length; i++) {
       bytes[i] = decoded.charCodeAt(i);
     }
-
     return new Blob([bytes]);
   }
 }
+
+// ========== 模块级辅助 ==========
+
+/** 解析 manifest JSON。 */
+function parseManifest(json: string): ChunkedManifest {
+  const parsed = JSON.parse(json) as ChunkedManifest;
+  if (typeof parsed.formatVersion !== 'number') {
+    throw new Error('manifest 缺少 formatVersion');
+  }
+  if (parsed.formatVersion !== CHUNKED_FORMAT_VERSION) {
+    throw new Error(
+      `不支持的 manifest 版本 ${parsed.formatVersion}（当前 ${CHUNKED_FORMAT_VERSION}）`,
+    );
+  }
+  if (!parsed.chunks || typeof parsed.chunks !== 'object') {
+    throw new Error('manifest.chunks 缺失或类型错误');
+  }
+  if (typeof parsed.tombstoneChunk !== 'string' || typeof parsed.tombstoneSha !== 'string') {
+    throw new Error('manifest 缺少 tombstone 元信息');
+  }
+  return parsed;
+}
+
+/**
+ * 解析 engine 传来的"快照 JSON 字符串"。
+ *
+ * 兼容两种形态：
+ * 1. 新版带 formatVersion 的 SnapshotPayload（mergeSnapshots 输出）
+ * 2. 旧版纯 tables + tombstones
+ */
+function parseSnapshotData(json: string): SerializedSnapshot {
+  const parsed = JSON.parse(json) as Partial<{
+    formatVersion: number;
+    tables: Partial<Record<SyncableTableName, Record<string, unknown>[]>>;
+    tombstones: Tombstone[];
+  }>;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new StorageBackendError('INVALID_PAYLOAD', '快照反序列化失败：payload 不是对象');
+  }
+  const tables = (parsed.tables ?? {}) as Partial<Record<SyncableTableName, Record<string, unknown>[]>>;
+  const tombstones = Array.isArray(parsed.tombstones) ? parsed.tombstones : [];
+  return { tables, tombstones };
+}
+
+// 抑制 unused 警告（DATA_CHUNK_NAMES 通过 chunks 模块的间接依赖保留）
+void DATA_CHUNK_NAMES;

@@ -84,8 +84,8 @@ describe('utf8ToBase64 / base64ToUtf8', () => {
   });
 });
 
-describe('GitHubBackend 中文快照全链路', () => {
-  it('上传含中文的 state.json → 下载回来内容一致（含 emoji 与特殊符号）', async () => {
+describe('GitHubBackend 中文快照全链路（分片协议 v1.3-CloudSync-Chunked）', () => {
+  it('上传含中文的快照 → 下载回来内容一致（含 emoji 与特殊符号）', async () => {
     const stateJson = JSON.stringify({
       formatVersion: 1,
       generatedAt: '2026-07-31T12:00:00Z',
@@ -103,39 +103,58 @@ describe('GitHubBackend 中文快照全链路', () => {
       tombstones: [],
     });
 
-    // 模拟 GitHub：PUT 存下 base64，GET 返回同样的 base64
-    let storedContent = '';
-    let storedSha = 'sha-1';
+    // 模拟 GitHub：每个 PUT 都存下来，GET 返回同样的 base64
+    const storedFiles = new Map<string, { content: string; sha: string }>();
+    let shaCounter = 1;
 
     const restore = installFakeFetch((url, init) => {
-      if (init.method === 'PUT' && url.endsWith('/contents/sync/state.json')) {
+      const method = init.method;
+      // 去掉 query string 再匹配
+      const cleanUrl = url.split('?')[0]!;
+      // PUT chunks/chunk-*.json 或 manifest.json
+      const chunkMatch = cleanUrl.match(/\/contents\/sync\/chunks\/(chunk-[^.]+|manifest)\.json$/);
+      if (method === 'PUT' && chunkMatch) {
         const body = JSON.parse(String(init.body)) as { content: string };
-        storedContent = body.content;
-        return jsonResponse(201, { content: { sha: storedSha } });
+        const path = chunkMatch[1]!;
+        const sha = `sha-${shaCounter++}`;
+        storedFiles.set(path, { content: body.content, sha });
+        return jsonResponse(201, { content: { sha } });
       }
-      if (init.method === 'GET' && url.includes('/contents/sync/state.json')) {
+      // GET chunks/*.json
+      if (method === 'GET' && chunkMatch) {
+        const path = chunkMatch[1]!;
+        const stored = storedFiles.get(path);
+        if (!stored) return jsonResponse(404, { message: 'Not Found' });
         return jsonResponse(200, {
           type: 'file',
-          name: 'state.json',
-          path: 'sync/state.json',
-          sha: storedSha,
-          content: storedContent,
+          name: `${path}.json`,
+          path: `sync/chunks/${path}.json`,
+          sha: stored.sha,
+          content: stored.content,
           encoding: 'base64',
-          size: storedContent.length,
+          size: stored.content.length,
         });
       }
-      throw new Error(`未预期的请求: ${init.method} ${url}`);
+      // 老 state.json 不存在（404）—— 让 readExtendedVersion 走纯新协议路径
+      if (method === 'GET' && cleanUrl.endsWith('/contents/sync/state.json')) {
+        return jsonResponse(404, { message: 'Not Found' });
+      }
+      throw new Error(`未预期的请求: ${method} ${url}`);
     });
 
     try {
       const backend = new GitHubBackend(config);
 
       const upload = await backend.uploadSnapshot(stateJson, '');
-      expect(upload.newVersion).toBe('sha-1');
+      expect(upload.newVersion).toMatch(/^sha-/);
 
       const download = await backend.downloadSnapshot();
-      expect(download.version).toBe('sha-1');
-      expect(download.data).toBe(stateJson);
+      expect(download.version).toBe(upload.newVersion);
+      // 下载回来仍是完整快照（合并后），内容应与上传一致
+      const parsed = JSON.parse(download.data) as typeof JSON.parse extends never ? never : { tables: Record<string, unknown[]>; tombstones: unknown[] };
+      expect(parsed.tables.plans).toHaveLength(2);
+      expect((parsed.tables.plans[0] as { title: string }).title).toBe('暑假阅读计划 📚');
+      expect(parsed.tables.blogs).toHaveLength(1);
     } finally {
       restore();
     }
@@ -143,27 +162,66 @@ describe('GitHubBackend 中文快照全链路', () => {
 
   it('下载的 base64 载荷包含多字节字符也能还原为 UTF-8（不产生乱码）', async () => {
     const title = '多字节载荷测试 🔥';
-    const original = JSON.stringify({ plans: [{ id: 'p1', title }] });
+    // 构造一个有效分片 manifest
+    const chunkJson = JSON.stringify({ tables: { plans: [{ id: 'p1', title }] } });
+    const chunkBase64 = utf8ToBase64(chunkJson);
+    const manifestJson = JSON.stringify({
+      formatVersion: 2,
+      generatedAt: '2026-08-01T00:00:00Z',
+      chunks: {
+        'chunk-0': { sha: 'chunk-sha', size: chunkBase64.length, tables: ['plans'] },
+      },
+      tombstoneChunk: 'chunk-tombstones',
+      tombstoneSha: 'tomb-sha',
+      tombstoneSize: 50,
+    });
+    const manifestBase64 = utf8ToBase64(manifestJson);
+    const tombJson = JSON.stringify({ tombstones: [] });
+    const tombBase64 = utf8ToBase64(tombJson);
 
-    const restore = installFakeFetch((url, init) => {
-      if (init.method === 'GET' && url.includes('/contents/sync/state.json')) {
+    const restore = installFakeFetch((url) => {
+      const clean = url.split('?')[0]!;
+      if (clean.endsWith('/contents/sync/chunks/manifest.json')) {
         return jsonResponse(200, {
           type: 'file',
-          name: 'state.json',
-          path: 'sync/state.json',
-          sha: 'sha-x',
-          content: utf8ToBase64(original),
+          name: 'manifest.json',
+          path: 'sync/chunks/manifest.json',
+          sha: 'manifest-sha',
+          content: manifestBase64,
           encoding: 'base64',
-          size: utf8ToBase64(original).length,
+          size: manifestBase64.length,
         });
       }
-      throw new Error(`未预期的请求: ${init.method} ${url}`);
+      if (clean.endsWith('/contents/sync/chunks/chunk-0.json')) {
+        return jsonResponse(200, {
+          type: 'file',
+          name: 'chunk-0.json',
+          path: 'sync/chunks/chunk-0.json',
+          sha: 'chunk-sha',
+          content: chunkBase64,
+          encoding: 'base64',
+          size: chunkBase64.length,
+        });
+      }
+      if (clean.endsWith('/contents/sync/chunks/chunk-tombstones.json')) {
+        return jsonResponse(200, {
+          type: 'file',
+          name: 'chunk-tombstones.json',
+          path: 'sync/chunks/chunk-tombstones.json',
+          sha: 'tomb-sha',
+          content: tombBase64,
+          encoding: 'base64',
+          size: tombBase64.length,
+        });
+      }
+      throw new Error(`unexpected ${url}`);
     });
 
     try {
       const backend = new GitHubBackend(config);
       const result = await backend.downloadSnapshot();
-      expect(result.data).toBe(original);
+      // 合并后内容应包含原始 title
+      expect(result.data).toContain(title);
       expect(result.data).not.toContain('å');
     } finally {
       restore();

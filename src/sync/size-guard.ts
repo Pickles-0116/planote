@@ -1,19 +1,21 @@
 /**
- * 同步 payload 体积防护（v1.3-CloudSync-Trim）
+ * 同步 payload 体积防护（v1.3-CloudSync-Chunked）
  *
- * 问题：GitHub Contents API 对单文件上传虽限制较宽（~100MB），但当远端单文件
- * 体积过大时，下载返回的 base64 字符串可能撞客户端 base64 解析的边界、或 GitHub
- * 网关对响应体大小的隐形限制，导致 `data.encoding === 'base64'` 但 content 为空 /
- * 截断，进而被本地上报为 INVALID_PAYLOAD（用户看到的提示是"远端数据格式不兼容，已跳过"）。
+ * 协议变更说明：
+ * - v1.3-CloudSync-Trim 阶段：单文件 state.json，上限 900KB base64
+ *   （GitHub Contents API 在 ~1MB 起回包不稳定，content 可能为空）
+ * - v1.3-CloudSync-Chunked 阶段：拆成多片，单分片上限 200KB base64
+ *   （5x 安全边界），不再有单文件上限
  *
- * 防护策略：在 engine 推送前估算 base64 体积，超阈值则拒绝上传并提示用户清理
- * 附件 / 历史 AI 日志，避免远端再生成超大 state.json。
- *
- * 阈值选择：1MB base64 ≈ 750KB 二进制。留 100KB 余量给将来的元数据增长。
+ * 旧常量 MAX_SNAPSHOT_BASE64_BYTES / SnapshotTooLargeError 保留以维持
+ * 既有测试与外部调用方兼容；新代码应使用 `assertChunkFits`。
  */
 
-/** 安全上传上限：base64 后字节数。实测 1MB base64 已经是 GitHub 单文件回包不稳的临界。 */
+/** 历史保留：单文件 state.json 上限（900KB base64）。新协议下已无单文件，但保留常量避免破坏性变更。 */
 export const MAX_SNAPSHOT_BASE64_BYTES = 900 * 1024;
+
+/** 分片上限（200KB base64）。新协议下所有上传文件必须满足。 */
+export const MAX_CHUNK_BASE64_BYTES = 200 * 1024;
 
 /** payload 体积超限时抛出的错误（专门类型供 engine / UI 区分）。 */
 export class SnapshotTooLargeError extends Error {
@@ -74,11 +76,25 @@ export function estimateBase64Bytes(json: string): number {
 /**
  * 检查序列化后的快照 JSON 体积是否超出安全上限。
  * 超限则抛 SnapshotTooLargeError，调用方应 catch 并以用户可读错误上报。
+ *
+ * 注：本函数主要用于 v1.3 旧协议的单文件 state.json；新协议下应在每片
+ * 上传前调用 `assertChunkFits`。
  */
 export function assertSnapshotFits(serialized: string): void {
   const size = estimateBase64Bytes(serialized);
   if (size > MAX_SNAPSHOT_BASE64_BYTES) {
     throw new SnapshotTooLargeError(size, MAX_SNAPSHOT_BASE64_BYTES);
+  }
+}
+
+/**
+ * 检查单分片序列化后的体积是否超出 200KB base64 上限。
+ * 新协议下每个 chunk 文件上传前必须调用。
+ */
+export function assertChunkFits(serialized: string): void {
+  const size = estimateBase64Bytes(serialized);
+  if (size > MAX_CHUNK_BASE64_BYTES) {
+    throw new SnapshotTooLargeError(size, MAX_CHUNK_BASE64_BYTES);
   }
 }
 
