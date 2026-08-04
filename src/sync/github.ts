@@ -18,6 +18,7 @@ import {
 } from './types';
 import type { SyncConfig } from '@/db/sync/types';
 import { utf8ToBase64, base64ToUtf8 } from './utils';
+import { RemoteSnapshotTooLargeError } from './size-guard';
 
 /** GitHub REST API 基础 URL。 */
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -199,6 +200,13 @@ export class GitHubBackend implements StorageBackend {
     const data = (await handled.json()) as GitHubContentItem;
 
     if (!data.content || data.encoding !== 'base64') {
+      // 特殊识别：GitHub Contents API 对超大文件会返回 metadata 但 content 字段为空
+      // （实测 ~1.4MB 起出现，encoding="none"）。这是「远端文件过大」而不是格式错误，
+      // 直接抛 RemoteSnapshotTooLargeError，mapToSyncError 会映射为 PAYLOAD_TOO_LARGE。
+      const fileSize = typeof data.size === 'number' ? data.size : 0;
+      if (fileSize > 1024 * 1024) {
+        throw new RemoteSnapshotTooLargeError(fileSize);
+      }
       throw new StorageBackendError(
         'INVALID_PAYLOAD',
         `远端 state.json 编码格式异常（content 长度=${data.content?.length ?? 0}，` +

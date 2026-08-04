@@ -60,6 +60,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 上抛，掩盖了真实原因。同时快照里混入了若干不该参与同步的 AI 表（`aiCallLogs` /
 `aiPlans`），每次推送都会把这些表也写进去，体积越涨越大。
 
+### 二次修复（v1.3.1 同一 hotfix 内）
+
+进一步调查后确认：GitHub Contents API 对 ~1.4MB 以上文件会返回 metadata 但
+`content` 字段为空（`encoding: "none"`），原代码在 `downloadSnapshot` 把这种情况
+直接抛 `INVALID_PAYLOAD`，被错误归类为 `FORMAT_MISMATCH`。
+
+新增 `RemoteSnapshotTooLargeError`：
+- 触发条件：`size > 1MB && content === '' && encoding === 'none'`
+- 映射：`mapToSyncError` 直接走 `PAYLOAD_TOO_LARGE`，提示用户去仓库删除该文件
+- 用户路径：「应用 → 云同步 → 立即同步」会触发下载检测、报错，但**无法自动恢复**
+  （旧文件 1.4MB 本地无法读回），需要用户手动在 GitHub 仓库删除 `sync/state.json`
+  （默认 `directory`）后重试。第一次重试会被视为首次同步（404），用本机数据重推。
+
+> 经验沉淀：之后如果还出现「远端数据格式不兼容」，先用 `gh api repos/<owner>/<repo>/contents/<path>`
+> 看一下远端 metadata 的 `size` 字段和 `content` 是不是空。`size > 1MB` 几乎可以
+> 肯定是 GitHub 不再返回 content 的边界问题，不是真正的格式错误。
+
 ### 修复
 
 - **同步白名单瘦身**（`db/sync/types.ts` + `db/sync/capture.ts` + `sync/engine.ts`）

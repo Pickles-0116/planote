@@ -28,6 +28,17 @@ describe('mapToSyncError', () => {
     expect(SYNC_ERROR_MESSAGES.PAYLOAD_TOO_LARGE).toMatch(/清理|暂停/);
   });
 
+  it('RemoteSnapshotTooLargeError → PAYLOAD_TOO_LARGE，提示用户删除远端文件', async () => {
+    const { RemoteSnapshotTooLargeError } = await import('../size-guard');
+    const orig = new RemoteSnapshotTooLargeError(1_379_615);
+    const err = mapToSyncError(orig);
+
+    expect(err.type).toBe('PAYLOAD_TOO_LARGE');
+    expect(err.userMessage).toMatch(/1\.3\d MB/);
+    expect(err.userMessage).toMatch(/删除/);
+    expect(err.cause).toBe(orig);
+  });
+
   it('StorageBackendError INVALID_PAYLOAD 仍映射为 FORMAT_MISMATCH（不受新增类型影响）', () => {
     const err = mapToSyncError(
       new StorageBackendError('INVALID_PAYLOAD', 'some issue'),

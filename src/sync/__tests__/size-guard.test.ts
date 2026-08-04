@@ -12,6 +12,7 @@ import {
   estimateBase64Bytes,
   assertSnapshotFits,
   SnapshotTooLargeError,
+  RemoteSnapshotTooLargeError,
   MAX_SNAPSHOT_BASE64_BYTES,
 } from '../size-guard';
 
@@ -64,5 +65,19 @@ describe('size-guard 体积防护', () => {
     // 构造一个估算后必然超限的 payload
     const targetJson = 'a'.repeat(Math.ceil((MAX_SNAPSHOT_BASE64_BYTES * 3) / 4) + 1000);
     expect(() => assertSnapshotFits(targetJson)).toThrow(SnapshotTooLargeError);
+  });
+});
+
+describe('RemoteSnapshotTooLargeError（远端文件超限）', () => {
+  it('构造时暴露 remoteSize 字段', () => {
+    const err = new RemoteSnapshotTooLargeError(1_379_615);
+    expect(err.remoteSize).toBe(1_379_615);
+    expect(err.name).toBe('RemoteSnapshotTooLargeError');
+  });
+
+  it('userMessage 含「删除」和具体大小提示', () => {
+    const err = new RemoteSnapshotTooLargeError(1_379_615);
+    expect(err.message).toMatch(/删除/);
+    expect(err.message).toMatch(/1\.3\d MB/);
   });
 });

@@ -61,14 +61,19 @@ export class SyncError extends Error {
  * 转译为 SyncError 类型枚举与中文提示。
  */
 import { StorageBackendError } from './types';
-import { SnapshotTooLargeError } from './size-guard';
+import { SnapshotTooLargeError, RemoteSnapshotTooLargeError } from './size-guard';
 
 export function mapToSyncError(error: unknown): SyncError {
   // 已经是 SyncError → 直接返回
   if (error instanceof SyncError) return error;
 
-  // 体积超限（v1.3-CloudSync-Trim）→ 透出具体大小给用户
+  // 本地 payload 体积超限（推送前估算 → 主动拒绝）
   if (error instanceof SnapshotTooLargeError) {
+    return new SyncError('PAYLOAD_TOO_LARGE', error, error.message);
+  }
+
+  // 远端 state.json 体积超限（GitHub 不再返回 content 字段）
+  if (error instanceof RemoteSnapshotTooLargeError) {
     return new SyncError('PAYLOAD_TOO_LARGE', error, error.message);
   }
 

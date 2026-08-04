@@ -34,6 +34,30 @@ export class SnapshotTooLargeError extends Error {
 }
 
 /**
+ * 远端 state.json 体积超限（v1.3-CloudSync-Trim 二次修复）。
+ *
+ * 触发场景：本地下载远端 state.json 时，GitHub Contents API 对超大文件（实测
+ * 1.4MB 左右二进制）会返回 metadata 但 content 字段为空（`encoding: "none"`）。
+ * 之前这条路径被误报为 INVALID_PAYLOAD → FORMAT_MISMATCH，掩盖了真实原因。
+ *
+ * 修复：github.ts 检测到 content 为空 + file size 超大时直接抛本错误，
+ * mapToSyncError 把它映射为 PAYLOAD_TOO_LARGE 提示用户删除远端旧文件后重试。
+ */
+export class RemoteSnapshotTooLargeError extends Error {
+  /** 远端文件实际字节数（从 GitHub API 的 `size` 字段拿到）。 */
+  public readonly remoteSize: number;
+  constructor(remoteSize: number) {
+    super(
+      `远端 state.json 体积过大（${formatBytes(remoteSize)}），GitHub 已不再返回内容。` +
+        `请在仓库「${'(由实际 directory 配置决定)'}」中删除该文件后，在应用内点「立即同步」重试。`,
+    );
+    this.name = 'RemoteSnapshotTooLargeError';
+    this.remoteSize = remoteSize;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
  * 估算 JSON 字符串 base64 编码后的字节数。
  *
  * 不真的做 base64 编码（开销大），而是用近似公式：
