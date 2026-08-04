@@ -51,4 +51,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - 复用 `useAIGenerate` 生成管线和 `AIStatusBar` 停止/状态条交互。
   - 设计阶段产出见 `openspec/changes/ai-chat-create-content/design.md` 等历史调研文档。
 
+## [1.3.CloudSync-Trim] - 云同步瘦身与体积防护（hotfix）
+
+### 背景
+线上用户反馈「云同步出错：远端数据格式不兼容，已跳过」。经排查，远端 `state.json`
+体积已膨胀至 1.3MB（base64 后 ≈ 1.36MB），撞 GitHub Contents API 单文件回包的隐形
+边界，导致 `data.content` 为空 / 截断，本地按 `INVALID_PAYLOAD → FORMAT_MISMATCH`
+上抛，掩盖了真实原因。同时快照里混入了若干不该参与同步的 AI 表（`aiCallLogs` /
+`aiPlans`），每次推送都会把这些表也写进去，体积越涨越大。
+
+### 修复
+
+- **同步白名单瘦身**（`db/sync/types.ts` + `db/sync/capture.ts` + `sync/engine.ts`）
+  - 从 `SyncableTableName` 移除 `aiCallLogs`（设备本地 AI 统计，跨设备无意义）
+  - 从 `SyncableTableName` 移除 `aiPlans`（v1.3 仍属实验性功能，体积大且 v1.4 引入
+    附件分片后再加回）
+  - 同步移除 `AICallLogRepo.clearAll` / `AIPlanRepo.remove` 中的墓碑写入
+    （这两张表不再参与同步，删除不应跨设备传播）
+
+- **反序列化兼容**（`sync/snapshot.ts`）
+  - 反序列化时若 `tables` 出现非白名单表名（来自历史快照），打 `console.warn`
+    并剔除而非抛错，确保版本过渡期可正常读取老快照
+  - `tombstones` 字段缺失时兜底为空数组（兼容更老版本）
+  - 白名单内表但 `rows` 不是数组时降级为空数组
+
+- **推送前体积防护**（新增 `sync/size-guard.ts` + `sync/engine.ts` 三处插入）
+  - 上限：base64 后 900KB（≈ 675KB 二进制，留余量给元数据增长）
+  - 超限抛 `SnapshotTooLargeError`，由 `mapToSyncError` 映射为新的
+    `PAYLOAD_TOO_LARGE` 错误类型，UI 展示「同步数据过大，已暂停推送。请清理附件
+    或 AI 历史后再试」
+  - 防护覆盖：首次同步、推送流程、版本冲突重试拉取后的重新推送
+
+- **错误信息可诊断性**（`sync/github.ts`）
+  - `INVALID_PAYLOAD` 错误信息现在包含 content 长度、encoding、file size 字段，
+    便于下次再撞大文件 / 编码异常时能立刻定位
+
+- **新增错误类型**（`sync/sync-error.ts`）
+  - `PAYLOAD_TOO_LARGE` 类型与中文兜底消息
+
+### 兼容性
+
+- 旧客户端（白名单含 `aiCallLogs / aiPlans`）读新快照：多余表会被忽略，不影响数据
+- 新客户端读旧快照：剔除非白名单表（`aiCallLogs / aiPlans`）后正常处理
+- `formatVersion` 仍为 1，不递增；本次为白名单变更，不影响顶层结构
+
+### 验证
+
+- 新增 `size-guard.test.ts`（6 用例，含边界值 + 超限抛错）
+- 新增 `sync-error.test.ts`（4 用例，含 PAYLOAD_TOO_LARGE 映射）
+- `snapshot.test.ts` 新增 3 用例：白名单过滤、tombstones 兜底、rows 类型降级
+- `tsc --noEmit` 0 错误
+- vitest 202/207 通过（剩余 3 个 `migration.test.ts` 失败为 jsdom + fake-indexeddb
+  环境历史问题，在主分支上同样失败，与本次改动无关）
+
+### 用户操作
+
+升级到本版本后，云同步仍提示「格式不兼容」的用户需：
+1. 在 GitHub 同步仓库中删除旧的 `data/state.json`（建议先下载备份）
+2. 在应用内点「立即同步」，会用本机数据生成一份新的、更小的 `state.json`
+
 <!-- 历史版本保留区（0.1.0 之前的脚手架与仪表盘迭代） -->

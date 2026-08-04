@@ -8,7 +8,6 @@
 import type { ID, AIPlan, ExecutionStep, ExecutionStepStatus, ISODate } from '@/types/domain';
 import type { PlanoteDB } from '../schema';
 import { newId } from '@/lib/id';
-import { makeTombstone } from '../sync/tombstones';
 
 const now = (): ISODate => new Date().toISOString();
 
@@ -44,10 +43,10 @@ export class AIPlanRepo {
   }
 
   async remove(id: ID): Promise<void> {
-    await this.db.transaction('rw', this.db.aiPlans, this.db.tombstones, async () => {
+    // aiPlans 在 v1.3 起不参与云同步（见 db/sync/types.ts 注释），
+    // 物理删除本地记录即可，不再写墓碑。
+    await this.db.transaction('rw', this.db.aiPlans, async () => {
       await this.db.aiPlans.delete(id);
-      // 物理删除 + 写墓碑
-      await this.db.tombstones.put(makeTombstone('aiPlans', id));
     });
   }
 }

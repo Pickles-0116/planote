@@ -117,4 +117,54 @@ describe('snapshot 序列化 / 反序列化', () => {
   it('无效 JSON 字符串时抛错', () => {
     expect(() => deserializeSnapshot('这不是 JSON')).toThrow('无效的 JSON 格式');
   });
+
+  // ============ v1.3-CloudSync-Trim：白名单兼容 ============
+
+  it('反序列化时剔除非白名单表（如历史 aiCallLogs / aiPlans），保留白名单内表', () => {
+    // 模拟一个 v1.3 之前版本推送上去的远端快照：tables 里多了 aiCallLogs / aiPlans
+    const legacyJson = JSON.stringify({
+      formatVersion: SNAPSHOT_FORMAT_VERSION,
+      generatedAt: '2026-08-01T00:00:00Z',
+      tables: {
+        plans: [{ id: 'p1', title: '旧版同步上来的计划' }],
+        aiCallLogs: [{ id: 'log1', modelProfileId: 'm1', mode: 'polish' }],
+        aiPlans: [{ id: 'aip1', title: '旧版 AI 计划', steps: [] }],
+        blogs: [{ id: 'b1', title: '博客' }],
+      },
+      tombstones: [],
+    });
+
+    const parsed = deserializeSnapshot(legacyJson);
+
+    // 白名单内表保留
+    expect(parsed.tables.plans).toHaveLength(1);
+    expect(parsed.tables.blogs).toHaveLength(1);
+    // 非白名单表被剔除（而不是抛错）
+    expect((parsed.tables as Record<string, unknown>).aiCallLogs).toBeUndefined();
+    expect((parsed.tables as Record<string, unknown>).aiPlans).toBeUndefined();
+  });
+
+  it('tombstones 字段缺失时兜底为空数组，不阻断同步', () => {
+    const oldShapeJson = JSON.stringify({
+      formatVersion: SNAPSHOT_FORMAT_VERSION,
+      generatedAt: '2026-07-30T10:00:00Z',
+      tables: { plans: [] },
+      // 故意没写 tombstones
+    });
+
+    const parsed = deserializeSnapshot(oldShapeJson);
+    expect(parsed.tombstones).toEqual([]);
+  });
+
+  it('白名单内表但 rows 不是数组时降级为空数组', () => {
+    const malformed = JSON.stringify({
+      formatVersion: SNAPSHOT_FORMAT_VERSION,
+      generatedAt: '2026-07-30T10:00:00Z',
+      tables: { plans: '这不该是字符串' },
+      tombstones: [],
+    });
+
+    const parsed = deserializeSnapshot(malformed);
+    expect(parsed.tables.plans).toEqual([]);
+  });
 });

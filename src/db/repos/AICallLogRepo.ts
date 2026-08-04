@@ -14,7 +14,6 @@ import type {
 } from './types';
 import { newId } from '@/lib/id';
 import type { PlanoteDB } from '../schema';
-import { makeTombstone } from '../sync/tombstones';
 
 const nowISO = (): ISODate => new Date().toISOString();
 
@@ -103,13 +102,11 @@ export class AICallLogRepo implements AICallLogRepository {
   }
 
   async clearAll(): Promise<void> {
-    // 先取将被删除的记录主键，用于写墓碑（aiCallLogs 在同步表清单内，删除需跨设备传播）
-    const toDelete = await this.db.aiCallLogs.toCollection().primaryKeys();
-    await this.db.transaction('rw', this.db.aiCallLogs, this.db.tombstones, async () => {
+    // aiCallLogs 不参与云同步（设备本机统计），所以这里只清空本表，不再写墓碑。
+    // 历史版本曾写墓碑，v1.3 起为避免与 SyncableTableName 类型冲突、且跨设备传播无意义，
+    // 已移除墓碑写入；多设备各自的 AI 统计独立累加。
+    await this.db.transaction('rw', this.db.aiCallLogs, async () => {
       await this.db.aiCallLogs.clear();
-      for (const id of toDelete) {
-        await this.db.tombstones.put(makeTombstone('aiCallLogs', id as ID));
-      }
     });
   }
 }

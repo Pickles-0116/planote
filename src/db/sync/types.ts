@@ -11,8 +11,16 @@ import type { ID, ISODate } from '@/types/domain';
 /**
  * 参与同步的业务表名。
  *
- * 与 `schema.ts` 中声明的 store 名一一对应。新增可同步表时务必同步更新此处，
- * 否则 `deleteRecord` / 变更队列 / 墓碑的 `table` 字段会漏掉该表。
+ * 与 `schema.ts` 中声明的 store 名一一对应。新增可同步表时务必同步更新此处、
+ * `db/sync/capture.ts` 的 SYNC_TABLES，以及 `sync/engine.ts` 的 readAllLocalData，
+ * 否则变更捕获 / 快照读取会漏掉该表。
+ *
+ * 注意（v1.3-CloudSync-Trim）：
+ * - `aiCallLogs` 是设备本地 AI 调用统计（用于本机的「AI 统计」面板），
+ *   跨设备合并会让指标失真，故从白名单移除，本地保留原表不动。
+ * - `aiPlans` 是 AI 计划模式的进度状态，理论上可跨设备共享，但 v1.3 阶段
+ *   仍属实验性功能且每条记录体积较大，暂从白名单移除避免拉爆远端单文件限额。
+ *   待 v1.4 引入附件分片 / Git LFS 后再加回。
  */
 export type SyncableTableName =
   | 'plans'
@@ -22,14 +30,12 @@ export type SyncableTableName =
   | 'attachments'
   | 'frameworks'
   | 'blogTemplates'
-  | 'aiCallLogs'
   | 'collections'
   | 'collectionItems'
   | 'chatSessions'
   | 'folders'
   | 'skillFolders'
-  | 'skills'
-  | 'aiPlans';
+  | 'skills';
 
 /**
  * 墓碑：一条「某记录已于某时刻被删除」的声明。

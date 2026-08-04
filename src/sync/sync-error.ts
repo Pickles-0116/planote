@@ -13,6 +13,7 @@ export type SyncErrorType =
   | 'REPO_NOT_FOUND' // 404 → 仓库/分支不存在
   | 'VERSION_CONFLICT' // 版本冲突 → 乐观锁重试
   | 'FORMAT_MISMATCH' // 快照格式版本不识别
+  | 'PAYLOAD_TOO_LARGE' // payload 体积超过单文件安全上限
   | 'NETWORK_ERROR' // 网络不可达
   | 'UNKNOWN'; // 其他
 
@@ -22,6 +23,7 @@ export const SYNC_ERROR_MESSAGES: Record<SyncErrorType, string> = {
   REPO_NOT_FOUND: '无法访问该仓库，请检查仓库名与分支',
   VERSION_CONFLICT: '远端数据正在被其他设备更新，正在重试…',
   FORMAT_MISMATCH: '远端数据格式不兼容，已跳过',
+  PAYLOAD_TOO_LARGE: '同步数据过大，已暂停推送。请清理附件或 AI 历史后再试',
   NETWORK_ERROR: '网络不可用，变更将在恢复后自动同步',
   UNKNOWN: '同步出错，请稍后重试',
 };
@@ -59,10 +61,16 @@ export class SyncError extends Error {
  * 转译为 SyncError 类型枚举与中文提示。
  */
 import { StorageBackendError } from './types';
+import { SnapshotTooLargeError } from './size-guard';
 
 export function mapToSyncError(error: unknown): SyncError {
   // 已经是 SyncError → 直接返回
   if (error instanceof SyncError) return error;
+
+  // 体积超限（v1.3-CloudSync-Trim）→ 透出具体大小给用户
+  if (error instanceof SnapshotTooLargeError) {
+    return new SyncError('PAYLOAD_TOO_LARGE', error, error.message);
+  }
 
   // StorageBackendError（M2 存储通道）
   if (error instanceof StorageBackendError) {

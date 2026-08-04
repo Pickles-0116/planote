@@ -201,7 +201,8 @@ export class GitHubBackend implements StorageBackend {
     if (!data.content || data.encoding !== 'base64') {
       throw new StorageBackendError(
         'INVALID_PAYLOAD',
-        '远端 state.json 编码格式异常',
+        `远端 state.json 编码格式异常（content 长度=${data.content?.length ?? 0}，` +
+          `encoding=${data.encoding ?? '<missing>'}，file size=${data.size ?? '<unknown>'} 字节）`,
       );
     }
 
@@ -381,7 +382,8 @@ export class GitHubBackend implements StorageBackend {
     if (!data.content || data.encoding !== 'base64') {
       throw new StorageBackendError(
         'INVALID_PAYLOAD',
-        `附件 ${key} 编码格式异常`,
+        `附件 ${key} 编码格式异常（content 长度=${data.content?.length ?? 0}，` +
+          `encoding=${data.encoding ?? '<missing>'}，file size=${data.size ?? '<unknown>'} 字节）`,
       );
     }
 

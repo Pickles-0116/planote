@@ -35,7 +35,12 @@ export function isCaptureSuppressed(): boolean {
   return _syncCaptureSuppressed;
 }
 
-/** 参与同步的业务表名列表（用于 Hook 循环）。 */
+/**
+ * 参与同步的业务表名列表（用于 Hook 循环）。
+ *
+ * 与 `db/sync/types.ts` 的 `SyncableTableName` 保持一致；新增/移除可同步表时
+ * 必须同时更新两边，否则会出现「变更能入队但永远读不到快照」或「读到了但入队缺失」。
+ */
 const SYNC_TABLES: SyncableTableName[] = [
   'plans',
   'items',
@@ -43,14 +48,12 @@ const SYNC_TABLES: SyncableTableName[] = [
   'tags',
   'frameworks',
   'blogTemplates',
-  'aiCallLogs',
   'collections',
   'collectionItems',
   'chatSessions',
   'folders',
   'skillFolders',
   'skills',
-  'aiPlans',
 ];
 
 /**
