@@ -133,6 +133,53 @@ sync/
 理论上每片 200KB / 6 片 = 1.2MB；超出后会再触发 `PAYLOAD_TOO_LARGE`。
 如未来需要支持 GB 级，再迁移到 GitHub Git Data API（`git/trees` + `git/commits` + `git/blobs`）。
 
+## [1.3.CloudSync-Chunked-2] - 分片内子切（sub-chunk）
+
+### 背景
+v1.3.CloudSync-Chunked 按"表分组"切，但用户的 `blogs` 表有 56 条，平均 23KB / 条
+→ 单片 1.3MB，仍撞 GitHub 1MB 隐形边界。实测 156c675 升级后立即同步还是失败，
+提示「同步数据过大（1.29 MB 估算后，上限 900.0 KB）」。
+
+### 方案
+在"按表分"之上加"按体积再切"：单逻辑分片超过 200KB 时按行数贪心切为多个子片
+（`chunk-1-a` / `chunk-1-b` / `chunk-1-c` ...），每片控制在 200KB base64 以内。
+
+### Manifest 改造
+
+老版：
+```json
+"chunks": { "chunk-1": { "sha": "...", "size": ..., "tables": ["blogs"] } }
+```
+
+新版：
+```json
+"chunks": {
+  "chunk-1": {
+    "tables": ["blogs"],
+    "subChunks": [
+      { "name": "chunk-1-a", "sha": "...", "size": 200000 },
+      { "name": "chunk-1-b", "sha": "...", "size": 200000 },
+      { "name": "chunk-1-c", "sha": "...", "size": 200000 }
+    ]
+  }
+}
+```
+
+向后兼容：检测到 chunk 节点无 `subChunks` 字段时当作老版（单子片，name = chunk key）。
+
+### 算法
+按顺序贪心累加记录；累计行 base64 + 30 字节 JSON 包裹 ≥ 上限时切下一片。
+保证：子片大小严格 ≤ 200KB、命名稳定（同一份数据切出同样结果）。
+
+### 验证
+- typecheck 0 错误
+- vitest 229/232 通过（3 个 migration 历史问题）
+- 新增 chunks.test.ts 子切专项 5 用例（贪心切、命名约定、合并、manifest 兼容）
+
+### 容量
+理论上每片 200KB × 任意多片；实测 blogs 56 条 1.3MB → 切为 7+ 子片，每片 ~180KB，
+远端 100% 稳定。
+
 ### 修复
 
 - **同步白名单瘦身**（`db/sync/types.ts` + `db/sync/capture.ts` + `sync/engine.ts`）

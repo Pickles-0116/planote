@@ -16,11 +16,13 @@ import {
   serializeChunk,
   deserializeChunk,
   buildManifest,
+  getSubChunkList,
   TABLE_TO_CHUNK,
   CHUNK_TO_TABLES,
   CHUNKED_FORMAT_VERSION,
   DATA_CHUNK_NAMES,
   TOMBSTONE_CHUNK_NAME,
+  MAX_CHUNK_BASE64_BYTES,
 } from '../chunks';
 import type { SyncableTableName, Tombstone } from '@/db/sync/types';
 
@@ -86,15 +88,16 @@ describe('分片协议 — split / merge', () => {
     expect(c1.payload.tables.blogs).toHaveLength(1);
     expect(Object.keys(c1.payload.tables)).toEqual(['blogs']);
 
-    // chunk-2 应只有 tags / frameworks / blogTemplates
+    // chunk-2 应只有 tags（frameworks/blogTemplates 为空数组被跳过，符合新"只填存在的表"策略）
     const c2 = chunks.find((c) => c.name === 'chunk-2')!;
     expect(c2.payload.tables.tags).toHaveLength(1);
-    expect(c2.payload.tables.frameworks).toEqual([]);
+    expect(c2.payload.tables.frameworks).toBeUndefined();
+    expect(c2.payload.tables.blogTemplates).toBeUndefined();
   });
 
   it('mergeChunksIntoSnapshot 拼回完整数据（无 tombstones）', () => {
     const manifest = buildManifest(
-      { 'chunk-0': { sha: 'a', size: 1, tables: ['plans', 'items'] } },
+      { 'chunk-0': { tables: ['plans', 'items'], subChunks: [{ name: 'chunk-0', sha: 'a', size: 1 }] } },
       { sha: 't', size: 1 },
     );
     const chunks = [
@@ -152,14 +155,112 @@ describe('分片协议 — serialize / deserialize', () => {
   });
 });
 
+describe('分片协议 — 子切（按体积再切）', () => {
+  it('单表行数很多时按体积贪心切为多子片', () => {
+    // 构造 100 条博客，每条约 5KB JSON → 总体积约 500KB → 至少切 3 片
+    const blogs = Array.from({ length: 100 }, (_, i) => ({
+      id: `b${i}`,
+      title: `Blog #${i}`,
+      content: 'X'.repeat(5000),
+    }));
+    const data = { tables: { blogs } };
+    const chunks = splitSnapshotIntoChunks(data);
+
+    // chunk-1 应被切为多个子片
+    const blogChunks = chunks.filter((c) => c.name.startsWith('chunk-1'));
+    expect(blogChunks.length).toBeGreaterThanOrEqual(3);
+
+    // 子片命名约定：chunk-1-a, chunk-1-b, ...
+    expect(blogChunks[0]?.name).toBe('chunk-1-a');
+    expect(blogChunks[1]?.name).toBe('chunk-1-b');
+    expect(blogChunks[2]?.name).toBe('chunk-1-c');
+
+    // 每个子片序列化后 base64 字节数不超过 200KB
+    for (const c of blogChunks) {
+      const json = serializeChunk(c.payload);
+      const base64Bytes = Math.ceil((json.length * 4) / 3);
+      expect(base64Bytes).toBeLessThanOrEqual(MAX_CHUNK_BASE64_BYTES);
+    }
+
+    // 合并后能拼回所有 100 条
+    const allBlogs = blogChunks.flatMap((c) => c.payload.tables.blogs ?? []);
+    expect(allBlogs).toHaveLength(100);
+  });
+
+  it('小数据量时单子片（无后缀），保持向后兼容', () => {
+    const data = {
+      tables: {
+        plans: [{ id: 'p1', title: 'short plan' }],
+        blogs: [{ id: 'b1', title: 'short blog' }],
+      },
+    };
+    const chunks = splitSnapshotIntoChunks(data);
+    const planChunks = chunks.filter((c) => c.name.startsWith('chunk-0'));
+    const blogChunks = chunks.filter((c) => c.name.startsWith('chunk-1'));
+    expect(planChunks).toHaveLength(1);
+    expect(planChunks[0]?.name).toBe('chunk-0'); // 单子片无后缀
+    expect(blogChunks[0]?.name).toBe('chunk-1');
+  });
+
+  it('mergeChunksIntoSnapshot 能从多子片拼回完整表', () => {
+    const data = {
+      tables: {
+        blogs: Array.from({ length: 100 }, (_, i) => ({
+          id: `b${i}`,
+          title: `Blog ${i}`,
+          content: 'X'.repeat(5000),
+        })),
+      },
+    };
+    const chunks = splitSnapshotIntoChunks(data);
+    const blogChunks = chunks.filter((c) => c.name.startsWith('chunk-1'));
+    expect(blogChunks.length).toBeGreaterThan(1);
+
+    const manifest = buildManifest(
+      {
+        'chunk-1': {
+          tables: ['blogs'],
+          subChunks: blogChunks.map((c) => ({ name: c.name, sha: 'fake', size: 100 })),
+        },
+      },
+      { sha: 'tomb', size: 10 },
+    );
+    const merged = mergeChunksIntoSnapshot(manifest, blogChunks, []);
+    expect(merged.tables.blogs).toHaveLength(100);
+  });
+
+  it('getSubChunkList 兼容老版 manifest 形态（无 subChunks）', () => {
+    const legacy = { sha: 'abc', size: 100, tables: ['plans'] as SyncableTableName[] };
+    const subs = getSubChunkList(legacy, 'chunk-0');
+    expect(subs).toHaveLength(1);
+    expect(subs[0]?.name).toBe('chunk-0');
+    expect(subs[0]?.sha).toBe('abc');
+  });
+
+  it('getSubChunkList 读取新版 manifest.subChunks', () => {
+    const modern: { tables: SyncableTableName[]; subChunks: Array<{ name: string; sha: string; size: number }> } = {
+      tables: ['blogs'],
+      subChunks: [
+        { name: 'chunk-1-a', sha: 'a', size: 100 },
+        { name: 'chunk-1-b', sha: 'b', size: 200 },
+      ],
+    };
+    const subs = getSubChunkList(modern, 'chunk-1');
+    expect(subs).toHaveLength(2);
+    expect(subs[0]?.name).toBe('chunk-1-a');
+  });
+});
+
 describe('分片协议 — manifest', () => {
   it('buildManifest 包含必要字段', () => {
     const m = buildManifest(
-      { 'chunk-0': { sha: 'abc', size: 100, tables: ['plans'] } },
+      { 'chunk-0': { tables: ['plans'], subChunks: [{ name: 'chunk-0', sha: 'abc', size: 100 }] } },
       { sha: 'tomb-sha', size: 50 },
     );
     expect(m.formatVersion).toBe(CHUNKED_FORMAT_VERSION);
-    expect(m.chunks['chunk-0']?.sha).toBe('abc');
+    expect(m.chunks['chunk-0'] && 'subChunks' in m.chunks['chunk-0']
+      ? m.chunks['chunk-0'].subChunks[0]?.sha
+      : undefined).toBe('abc');
     expect(m.tombstoneChunk).toBe(TOMBSTONE_CHUNK_NAME);
     expect(m.tombstoneSha).toBe('tomb-sha');
   });

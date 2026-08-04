@@ -26,13 +26,14 @@ import {
 } from './types';
 import type { SyncConfig } from '@/db/sync/types';
 import { utf8ToBase64, base64ToUtf8 } from './utils';
-import { RemoteSnapshotTooLargeError } from './size-guard';
+import { RemoteSnapshotTooLargeError, assertChunkFits } from './size-guard';
 import {
   buildManifest,
   deserializeChunk,
   serializeChunk,
   splitSnapshotIntoChunks,
   mergeChunksIntoSnapshot,
+  getSubChunkList,
   type ChunkedManifest,
   type ChunkMeta,
   DATA_CHUNK_NAMES,
@@ -316,14 +317,23 @@ export class GitHubBackend implements StorageBackend {
       const manifestJson = base64ToUtf8(manifestRaw.content);
       const manifest = parseManifest(manifestJson);
 
-      // 读所有数据分片
-      const chunkResults = await Promise.all(
-        Object.keys(manifest.chunks).map(async (chunkName) => {
-          const raw = await this.readRawFile(this.chunkPath(chunkName));
+      // 收集所有子片名（兼容老版 manifest 形态）
+      const allSubNames: Array<{ chunkKey: string; subName: string }> = [];
+      for (const [chunkKey, meta] of Object.entries(manifest.chunks)) {
+        const subList = getSubChunkList(meta, chunkKey);
+        for (const sub of subList) {
+          allSubNames.push({ chunkKey, subName: sub.name });
+        }
+      }
+
+      // 并行读所有子片
+      const subChunkResults = await Promise.all(
+        allSubNames.map(async ({ subName }) => {
+          const raw = await this.readRawFile(this.chunkPath(subName));
           if (!raw) {
             throw new StorageBackendError(
               'INVALID_PAYLOAD',
-              `远端缺少分片 ${chunkName}（manifest 声明存在但文件不存在）`,
+              `远端缺少子片 ${subName}（manifest 声明存在但文件不存在）`,
             );
           }
           if (raw.size > 1024 * 1024) {
@@ -332,11 +342,14 @@ export class GitHubBackend implements StorageBackend {
           if (!raw.content || raw.encoding !== 'base64') {
             throw new StorageBackendError(
               'INVALID_PAYLOAD',
-              `远端分片 ${chunkName} 编码异常`,
+              `远端子片 ${subName} 编码异常`,
             );
           }
           const json = base64ToUtf8(raw.content);
-          return { name: chunkName, payload: deserializeChunk(json) as { tables: Partial<Record<SyncableTableName, Record<string, unknown>[]>> } };
+          return {
+            name: subName,
+            payload: deserializeChunk(json) as { tables: Partial<Record<SyncableTableName, Record<string, unknown>[]>> },
+          };
         }),
       );
 
@@ -354,7 +367,7 @@ export class GitHubBackend implements StorageBackend {
         }
       }
 
-      const merged = mergeChunksIntoSnapshot(manifest, chunkResults, tombstones);
+      const merged = mergeChunksIntoSnapshot(manifest, subChunkResults, tombstones);
       // 仍然以单文件 JSON 形式返回（用 SNAPSHOT_FORMAT_VERSION=1 的旧 schema），
       // engine 一侧不知道分片存在，但合并后结构兼容。
       const wrapped = {
@@ -411,6 +424,7 @@ export class GitHubBackend implements StorageBackend {
     // 1. 拆分成 chunk + tombstone
     const dataChunks = splitSnapshotIntoChunks(snapshot);
     const tombstoneJson = serializeChunk({ tombstones: snapshot.tombstones });
+    assertChunkFits(tombstoneJson);
     const tombstoneName = TOMBSTONE_CHUNK_NAME;
 
     // 2. 判断 baseVersion 指向的是 manifest 还是 state.json
@@ -419,9 +433,12 @@ export class GitHubBackend implements StorageBackend {
     const isManifestBase = baseVersion && ext.version === baseVersion && ext.chunked;
 
     // 3. 上传所有数据分片
+    // 按"逻辑分片 → 子片列表"分组（chunk-1-a / chunk-1-b 同属 chunk-1）
     const newChunkMetas: Record<string, ChunkMeta> = {};
     for (const { name, payload } of dataChunks) {
       const json = serializeChunk(payload);
+      // 单子片体积防护（防止单记录超大撑爆 200KB 上限）
+      assertChunkFits(json);
       const chunkBaseVersion = isManifestBase
         ? (ext.version && (await this.readRawFile(this.chunkPath(name)))?.sha) || ''
         : ''; // 新协议下首次写或从老协议迁移：baseVersion 为空
@@ -431,11 +448,23 @@ export class GitHubBackend implements StorageBackend {
         chunkBaseVersion,
         `sync: update ${name} (base ${(baseVersion || 'init').slice(0, 7)})`,
       );
-      newChunkMetas[name] = {
+
+      // 确定这个子片属于哪个逻辑分片（chunk-1-a → chunk-1；chunk-1 → chunk-1）
+      const logicalKey = name.replace(/-[a-z]$/, '');
+      const logicalTables = (CHUNK_TO_TABLES[logicalKey] ?? []) as SyncableTableName[];
+
+      // 追加到对应逻辑分片的 subChunks 列表
+      if (!newChunkMetas[logicalKey]) {
+        newChunkMetas[logicalKey] = {
+          tables: logicalTables,
+          subChunks: [],
+        };
+      }
+      newChunkMetas[logicalKey]!.subChunks.push({
+        name,
         sha,
         size: json.length,
-        tables: (CHUNK_TO_TABLES[name] ?? []) as SyncableTableName[],
-      };
+      });
     }
 
     // 4. 上传墓碑分片
@@ -452,6 +481,7 @@ export class GitHubBackend implements StorageBackend {
     // 5. 写 manifest
     const manifest = buildManifest(newChunkMetas, { sha: tombSha, size: tombstoneJson.length });
     const manifestJson = JSON.stringify(manifest);
+    assertChunkFits(manifestJson);
     const manifestBase = isManifestBase ? baseVersion : '';
     const newManifestSha = await this.writeRawFile(
       this.manifestPath,
