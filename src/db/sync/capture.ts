@@ -14,6 +14,7 @@
 import type { PlanoteDB } from '../schema';
 import type { SyncableTableName } from './types';
 import { enqueueChange } from './changeQueue';
+import { getDirtyTracker } from './dirty-tracker';
 
 /** 同步引擎写入时抑制捕获的标志。 */
 let _syncCaptureSuppressed = false;
@@ -77,6 +78,8 @@ export function registerSyncCapture(db: PlanoteDB): void {
       if (_syncCaptureSuppressed) return;
       const record = obj as { id?: string };
       if (!record.id) return;
+      // 标记逻辑分片为脏（v1.3-CloudSync-DirtyChunk 增量推送依据）
+      getDirtyTracker().markDirty(tableName as SyncableTableName);
       queueMicrotask(() => {
         enqueueChange(db, tableName as SyncableTableName, record.id!, 'put').catch(
           () => {
@@ -89,6 +92,8 @@ export function registerSyncCapture(db: PlanoteDB): void {
     // 更新记录
     table.hook('updating').subscribe(function (this: void, _mods, primKey) {
       if (_syncCaptureSuppressed) return;
+      // 标记逻辑分片为脏
+      getDirtyTracker().markDirty(tableName as SyncableTableName);
       queueMicrotask(() => {
         enqueueChange(db, tableName as SyncableTableName, primKey as string, 'put').catch(
           () => {
@@ -101,6 +106,8 @@ export function registerSyncCapture(db: PlanoteDB): void {
     // 删除记录
     table.hook('deleting').subscribe(function (this: void, primKey) {
       if (_syncCaptureSuppressed) return;
+      // 标记逻辑分片为脏
+      getDirtyTracker().markDirty(tableName as SyncableTableName);
       queueMicrotask(() => {
         enqueueChange(
           db,

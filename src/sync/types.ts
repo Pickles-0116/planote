@@ -11,6 +11,12 @@ export interface VersionResult {
   version: string;
 }
 
+/** 扩展版本读取结果（含协议类型标识）。v1.3-CloudSync-Chunked 引入。 */
+export interface ExtendedVersionResult extends VersionResult {
+  /** 远端是否使用分片协议（manifest.json 存在）。 */
+  chunked: boolean;
+}
+
 /** 快照下载结果。 */
 export interface SnapshotDownloadResult {
   data: string;
@@ -69,6 +75,13 @@ export interface StorageBackend {
   /** 读取远端版本标识（仅 HEAD 请求语义，不下载内容）。 */
   readVersion(): Promise<VersionResult>;
 
+  /**
+   * 读取扩展版本信息（含协议类型）。v1.3-CloudSync-Chunked 引入。
+   * 默认实现：先调 readVersion()，再判定 chunked（通过读 manifest.json）。
+   * 旧 backend 不实现此方法时，调用方应回退到全量推送。
+   */
+  readExtendedVersion?(): Promise<ExtendedVersionResult>;
+
   /** 下载完整快照内容及其版本标识。 */
   downloadSnapshot(): Promise<SnapshotDownloadResult>;
 
@@ -77,9 +90,16 @@ export interface StorageBackend {
    *
    * @param data - 序列化后的快照 JSON 字符串
    * @param baseVersion - 基于哪个版本修改（乐观锁比较依据）
+   * @param options - 可选：
+   *   - dirtyChunks: 逻辑分片名集合（'chunk-0'..'chunk-4'）。只推送这些分片，
+   *     未列出的分片保留远端原文件不动。undefined/不传 = 全量推送。
    * @throws {StorageBackendError} 当远端版本与 baseVersion 不一致时抛 VERSION_CONFLICT
    */
-  uploadSnapshot(data: string, baseVersion: string): Promise<SnapshotUploadResult>;
+  uploadSnapshot(
+    data: string,
+    baseVersion: string,
+    options?: { dirtyChunks?: Set<string> },
+  ): Promise<SnapshotUploadResult>;
 
   /** 上传单个附件 blob。 */
   uploadAttachment(key: string, blob: Blob): Promise<void>;

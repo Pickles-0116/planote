@@ -198,6 +198,57 @@ v1.3.CloudSync-Chunked-2 引入子切后，`GitHubBackend.uploadSnapshot` 已经
 - typecheck 0 错误
 - vitest 229/232（3 个 migration 历史问题）
 
+## [1.3.CloudSync-DirtyChunk] - 分片粒度增量同步
+
+### 背景
+v1.3-CloudSync-Chunked-2 实现"全量分片推送"后，日常小改动（如改 1 条博客）仍要
+重传 6+ 个分片。1.3MB 数据实测完整同步 3-5 秒，其中 80% 时间花在没改过的分片上。
+
+### 方案
+引入**脏分片追踪器**（DirtyChunkTracker）记录"自上次成功同步以来本地变更的分片"，
+推送时只 PUT 那些分片；远端未脏分片保留原文件不动。
+
+### 实现
+
+- `src/db/sync/dirty-tracker.ts`（~150 行）：
+  - `markDirty(table)`：表名映射到逻辑分片
+  - 内存 + 持久化（meta 表 `sync:dirty-chunks`）
+  - `markPushed` 推送成功后清空
+- `src/sync/chunk-cache.ts`（~200 行）：
+  - 持久化"上次推送的每个分片内容副本 + SHA"
+  - 启动时校验与远端 manifest 一致性，不一致降级为全量
+  - 用于增量推送时补全未脏分片
+- `src/db/sync/capture.ts`：Dexie Hook 内调用 `getDirtyTracker().markDirty(table)`
+- `StorageBackend.uploadSnapshot` 新增 `options: { dirtyChunks?: Set<string> }`：
+  - 过滤：只 PUT 脏分片对应的子片
+  - 未脏分片从远端 manifest 复制原 SHA（不做 PUT）
+  - 墓碑分片独立处理：脏才推
+- `src/sync/engine.ts`：
+  - 新增 `dirtySyncPath` 增量推送路径
+  - 决策：首次同步 / 老格式 / 强制全量 / 脏集合空 / 缓存空 → 全量；否则增量
+  - 失败自动降级为全量推送（不暴露给用户）
+  - `retryOnConflict` 接受 uploadOptions 透传
+- `StorageBackend` 接口扩展 `readExtendedVersion?`（向后兼容）
+
+### 性能
+
+| 场景 | 改前 | 改后 | 提升 |
+|---|---|---|---|
+| 改 1 条博客 | 7 个 PUT ~3-5s | 1-3 个 PUT ~0.5-1.5s | **3-5x** |
+| 改 0 条数据 | 7 个 PUT ~3-5s | 7 个 PUT（保守）| 1x |
+| 首次同步 / 全量恢复 | 7 个 PUT | 7 个 PUT | 1x |
+
+### 验证
+- typecheck 0 错误
+- vitest 246/249 通过（3 个 migration 历史问题）
+- 新增 dirty-tracker.test.ts（9 用例）、chunk-cache.test.ts（6 用例）、
+  incremental-upload.test.ts（2 用例）
+
+### 用户感知
+- 日常"立即同步"明显变快
+- 错误信息无变化（用户无感）
+- UI 增强（v1.4 跟进）
+
 ### 修复
 
 - **同步白名单瘦身**（`db/sync/types.ts` + `db/sync/capture.ts` + `sync/engine.ts`）

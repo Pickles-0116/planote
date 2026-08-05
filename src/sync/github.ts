@@ -20,6 +20,7 @@
 import {
   type StorageBackend,
   type VersionResult,
+  type ExtendedVersionResult,
   type SnapshotDownloadResult,
   type SnapshotUploadResult,
   StorageBackendError,
@@ -53,12 +54,6 @@ const MAX_EMPTY_REPO_RETRIES = 2;
 interface SerializedSnapshot {
   tables: Partial<Record<SyncableTableName, Record<string, unknown>[]>>;
   tombstones: Tombstone[];
-}
-
-/** 适配器内部使用的版本结果（含 manifest 是否存在）。 */
-interface ExtendedVersionResult extends VersionResult {
-  /** 远端是否为分片模式（manifest.json 存在）。 */
-  chunked: boolean;
 }
 
 /** GitHub Contents API 返回的单项响应类型。 */
@@ -417,6 +412,7 @@ export class GitHubBackend implements StorageBackend {
   async uploadSnapshot(
     data: string,
     baseVersion: string,
+    options?: { dirtyChunks?: Set<string> },
   ): Promise<SnapshotUploadResult> {
     // 解析 data（兼容旧 schema 形式）
     const snapshot = parseSnapshotData(data);
@@ -432,11 +428,69 @@ export class GitHubBackend implements StorageBackend {
     const isLegacyBase = baseVersion && ext.version === baseVersion && !ext.chunked;
     const isManifestBase = baseVersion && ext.version === baseVersion && ext.chunked;
 
-    // 3. 上传所有数据分片
-    // 按"逻辑分片 → 子片列表"分组（chunk-1-a / chunk-1-b 同属 chunk-1）
-    const newChunkMetas: Record<string, ChunkMeta> = {};
+    // 3. 决定要上传哪些子片
+    //    - dirtyChunks 未提供 / 空 → 全量上传
+    //    - 提供了 → 只上传"逻辑分片 ∈ dirtyChunks"对应的子片
+    const dirtyChunks = options?.dirtyChunks;
+    const isIncremental = dirtyChunks && dirtyChunks.size > 0;
+
+    // 3.1 拉远端 manifest（用于增量模式：取未脏分片的旧 SHA + size）
+    let remoteManifest: ChunkedManifest | null = null;
+    if (isIncremental && isManifestBase) {
+      const raw = await this.readRawFile(this.manifestPath);
+      if (raw && raw.content && raw.encoding === 'base64') {
+        try {
+          remoteManifest = parseManifest(base64ToUtf8(raw.content));
+        } catch {
+          remoteManifest = null;
+        }
+      }
+    }
+
+    // 3.2 收集子片名 → 序列化 JSON（用于 manifest 拼装 + 缓存）
+    const chunkJsonMap = new Map<string, string>();
     for (const { name, payload } of dataChunks) {
-      const json = serializeChunk(payload);
+      chunkJsonMap.set(name, serializeChunk(payload));
+    }
+
+    // 4. 上传子片
+    //    全量模式：上传所有子片
+    //    增量模式：只上传脏分片对应的子片；未脏分片从远端 manifest 复制元信息
+    const newChunkMetas: Record<string, ChunkMeta> = {};
+    for (const { name } of dataChunks) {
+      const logicalKey = name.replace(/-[a-z]$/, '');
+      const isDirty = isIncremental ? (dirtyChunks!.has(logicalKey)) : true;
+
+      if (!isDirty) {
+        // 增量模式：未脏分片，从远端 manifest 复制元信息（不做 PUT）
+        if (remoteManifest) {
+          // 找远端 manifest 中对应的子片元信息
+          const remoteMeta = remoteManifest.chunks[logicalKey];
+          if (remoteMeta) {
+            const subList = getSubChunkList(remoteMeta, logicalKey);
+            // 必须包含我们正要"跳过"的那个子片
+            const remoteSub = subList.find((s) => s.name === name);
+            if (remoteSub) {
+              if (!newChunkMetas[logicalKey]) {
+                newChunkMetas[logicalKey] = {
+                  tables: (CHUNK_TO_TABLES[logicalKey] ?? []) as SyncableTableName[],
+                  subChunks: [],
+                };
+              }
+              newChunkMetas[logicalKey]!.subChunks.push({
+                name: remoteSub.name,
+                sha: remoteSub.sha,
+                size: remoteSub.size,
+              });
+            }
+          }
+        }
+        continue;
+      }
+
+      // 脏分片（或全量模式）：PUT
+      const json = chunkJsonMap.get(name);
+      if (json === undefined) continue;
       // 单子片体积防护（防止单记录超大撑爆 200KB 上限）
       assertChunkFits(json);
       const chunkBaseVersion = isManifestBase
@@ -449,11 +503,7 @@ export class GitHubBackend implements StorageBackend {
         `sync: update ${name} (base ${(baseVersion || 'init').slice(0, 7)})`,
       );
 
-      // 确定这个子片属于哪个逻辑分片（chunk-1-a → chunk-1；chunk-1 → chunk-1）
-      const logicalKey = name.replace(/-[a-z]$/, '');
       const logicalTables = (CHUNK_TO_TABLES[logicalKey] ?? []) as SyncableTableName[];
-
-      // 追加到对应逻辑分片的 subChunks 列表
       if (!newChunkMetas[logicalKey]) {
         newChunkMetas[logicalKey] = {
           tables: logicalTables,
@@ -467,19 +517,47 @@ export class GitHubBackend implements StorageBackend {
       });
     }
 
-    // 4. 上传墓碑分片
-    const tombBaseVersion = isManifestBase
-      ? (ext.version && (await this.readRawFile(this.chunkPath(tombstoneName)))?.sha) || ''
-      : '';
-    const tombSha = await this.writeRawFile(
-      this.chunkPath(tombstoneName),
-      tombstoneJson,
-      tombBaseVersion,
-      `sync: update ${tombstoneName} (base ${(baseVersion || 'init').slice(0, 7)})`,
-    );
+    // 4.1 增量模式下，未脏分片必须从远端 manifest 完整复制
+    //     （确保 newChunkMetas 覆盖全部逻辑分片，包括我们没本地内容的）
+    if (isIncremental && remoteManifest) {
+      for (const [chunkKey, remoteMeta] of Object.entries(remoteManifest.chunks)) {
+        if (dirtyChunks!.has(chunkKey)) continue; // 脏的已经处理过
+        if (newChunkMetas[chunkKey]) continue; // 上面循环已复制
+        const subList = getSubChunkList(remoteMeta, chunkKey);
+        if (subList.length > 0) {
+          newChunkMetas[chunkKey] = {
+            tables: (CHUNK_TO_TABLES[chunkKey] ?? []) as SyncableTableName[],
+            subChunks: subList,
+          };
+        }
+      }
+    }
+
+    // 4.2 决定是否上传墓碑分片：
+    //     - 全量：永远上传
+    //     - 增量：只有当墓碑分片在脏集合（用 'chunk-tombstones' 作为 chunkKey）
+    const isTombstoneDirty = !isIncremental || dirtyChunks!.has(tombstoneName);
+    let tombSha = '';
+    let tombSize = 0;
+    if (isTombstoneDirty) {
+      const tombBaseVersion = isManifestBase
+        ? (ext.version && (await this.readRawFile(this.chunkPath(tombstoneName)))?.sha) || ''
+        : '';
+      tombSha = await this.writeRawFile(
+        this.chunkPath(tombstoneName),
+        tombstoneJson,
+        tombBaseVersion,
+        `sync: update ${tombstoneName} (base ${(baseVersion || 'init').slice(0, 7)})`,
+      );
+      tombSize = tombstoneJson.length;
+    } else if (isIncremental && remoteManifest) {
+      // 增量 + 墓碑未脏：复用远端 SHA
+      tombSha = remoteManifest.tombstoneSha;
+      tombSize = remoteManifest.tombstoneSize;
+    }
 
     // 5. 写 manifest
-    const manifest = buildManifest(newChunkMetas, { sha: tombSha, size: tombstoneJson.length });
+    const manifest = buildManifest(newChunkMetas, { sha: tombSha, size: tombSize });
     const manifestJson = JSON.stringify(manifest);
     assertChunkFits(manifestJson);
     const manifestBase = isManifestBase ? baseVersion : '';

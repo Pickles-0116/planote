@@ -33,7 +33,17 @@ import { suppressCapture } from '@/db/sync/capture';
 import { serializeSnapshot, deserializeSnapshot } from './snapshot';
 import { mergeSnapshots } from './merger';
 import { mapToSyncError } from './sync-error';
+import { base64ToUtf8 } from './utils';
+import {
+  splitSnapshotIntoChunks,
+  serializeChunk,
+  deserializeChunk,
+  getSubChunkList,
+  type ChunkedManifest,
+} from './chunks';
 import type { SnapshotData } from './snapshot';
+import { getDirtyTracker, _resetDirtyTracker } from '@/db/sync/dirty-tracker';
+import { ChunkCache } from './chunk-cache';
 
 /** 一个携带 id 和可选时间戳的记录。 */
 interface TimestampedRecord {
@@ -293,12 +303,44 @@ export class SyncEngine {
   /**
    * 立即执行推送（忽略防抖）。
    * 外部可通过此方法实现「立即同步」。
+   *
+   * @param options.forceFullSync 强制全量推送（忽略脏追踪）
+   * @param options.skipDirtyTracking 跳过脏追踪决策（仅测试用）
    */
-  async executePush(): Promise<SyncResult | null> {
+  async executePush(options: { forceFullSync?: boolean; skipDirtyTracking?: boolean } = {}): Promise<SyncResult | null> {
     return this.withMutex(async () => {
       this.setStatus('syncing');
 
-      // 1. 拉取远端最新快照
+      // 0. 加载脏追踪器（如未加载）+ 决策走全量还是增量
+      const dirtyTracker = getDirtyTracker();
+      if (!dirtyTracker.isLoaded()) {
+        await dirtyTracker.load(this.db);
+      }
+      const cache = new ChunkCache();
+      if (!cache.isLoaded()) {
+        await cache.load(this.db);
+      }
+
+      // 决策：是否走增量推送
+      // 走全量的条件：首次同步、远端是老格式、强制全量、脏集合为空、缓存为空
+      const extVersion = await this.readRemoteExtVersion();
+      const isFirstSync = extVersion.version === '';
+      const remoteIsChunked = extVersion.chunked;
+      const hasLocalChanges = !dirtyTracker.isEmpty();
+      const hasCache = !cache.isEmpty();
+
+      const useIncremental =
+        !options.forceFullSync &&
+        !isFirstSync &&
+        remoteIsChunked &&
+        hasLocalChanges &&
+        hasCache;
+
+      if (useIncremental) {
+        return this.dirtySyncPath(dirtyTracker, cache);
+      }
+
+      // 1. 拉取远端最新快照（全量路径）
       let remoteVersion: string;
       let remoteData: SnapshotData;
 
@@ -389,11 +431,12 @@ export class SyncEngine {
     serialized: string,
     baseVersion: string,
     maxRetries = 3,
+    uploadOptions?: { dirtyChunks?: Set<string> },
   ) {
     let lastError: unknown;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        return await this.backend.uploadSnapshot(serialized, baseVersion);
+        return await this.backend.uploadSnapshot(serialized, baseVersion, uploadOptions);
       } catch (error) {
         if (attempt >= maxRetries - 1) {
           lastError = error;
@@ -435,6 +478,7 @@ export class SyncEngine {
                 return await this.backend.uploadSnapshot(
                   newSerialized,
                   newRemoteVersion,
+                  uploadOptions,
                 );
               }
             }
@@ -446,6 +490,308 @@ export class SyncEngine {
       }
     }
     throw lastError;
+  }
+
+  /**
+   * 读取远端扩展版本（含分片/单文件标记）。兼容旧 backend：未实现
+   * readExtendedVersion 时回退到全量推送（chunked = false）。
+   */
+  private async readRemoteExtVersion(): Promise<{ version: string; chunked: boolean }> {
+    if (this.backend.readExtendedVersion) {
+      try {
+        return await this.backend.readExtendedVersion();
+      } catch {
+        // 读取失败兜底
+        return { version: '', chunked: false };
+      }
+    }
+    // 旧 backend：只返回 version，假设非分片
+    const v = await this.backend.readVersion();
+    return { version: v.version, chunked: false };
+  }
+
+  /**
+   * 增量推送路径（v1.3-CloudSync-DirtyChunk）。
+   *
+   * 流程：
+   * 1. 拉取远端 manifest（不下载子片内容）
+   * 2. 校验本地 chunkCache 与远端 SHA 一致（不一致则降级全量）
+   * 3. 拉取脏分片
+   * 4. 用脏分片内容 + chunkCache 干净分片 → 构建完整 SnapshotData
+   * 5. 推：传 dirtyChunks 给 backend
+   * 6. 成功：更新 chunkCache + 清空 dirtyTracker + 持久化
+   * 7. 失败：自动降级为全量推送
+   */
+  private async dirtySyncPath(
+    dirtyTracker: ReturnType<typeof getDirtyTracker>,
+    cache: ChunkCache,
+  ): Promise<SyncResult> {
+    try {
+      // 1. 拉远端 manifest
+      const extVersion = await this.readRemoteExtVersion();
+      const remoteManifest = await this.fetchRemoteManifest();
+
+      // 2. SHA 一致性校验
+      if (remoteManifest) {
+        const mismatches = cache.findInconsistencies(remoteManifest);
+        if (mismatches.length > 0) {
+          // 降级为全量推送
+          return this.fallbackToFullSync(
+            'cache 校验失败：分片 ' + mismatches.slice(0, 3).join(', ') + ' SHA 不一致',
+          );
+        }
+      }
+
+      // 3. 计算要推的脏分片
+      const dirtyChunks = dirtyTracker.getDirtyChunks();
+      const ext = extVersion.version;
+
+      // 4. 拉脏分片
+      const remoteData = await this.fetchDirtyChunks(remoteManifest, dirtyChunks);
+
+      // 5. 用 chunkCache 补全未脏分片
+      const localData = await this.readAllLocalData();
+      const localCacheSnapshot = this.buildSnapshotFromCacheAndDirty(cache, remoteData, localData, dirtyChunks);
+
+      // 6. LWW 合并
+      const localTables = toTimestampedTables(localCacheSnapshot.tables);
+      const remoteTables = toTimestampedTables(remoteData.tables);
+      const mergeResult = mergeSnapshots(localTables, remoteTables, remoteData.tombstones);
+
+      // 7. 写入本地
+      suppressCapture(true);
+      try {
+        await this.applyMergeResult(mergeResult);
+      } finally {
+        suppressCapture(false);
+      }
+
+      // 8. 推：传 dirtyChunks options
+      const finalData = await this.readAllLocalData();
+      const serialized = serializeSnapshot(finalData);
+      const uploadResult = await this.retryOnConflict(
+        serialized,
+        ext,
+        3,
+        { dirtyChunks },
+      );
+
+      // 9. 拉新 manifest（远端可能因脏分片 PUT 后 SHA 变了）
+      const newManifest = await this.fetchRemoteManifest();
+
+      // 10. 更新 chunkCache：用本次推送的数据 + 远端新 manifest
+      if (newManifest) {
+        cache.updateFromManifest(newManifest, this.collectChunkJsonMap(finalData));
+        await cache.persist(this.db);
+      }
+
+      // 11. 清空脏追踪
+      dirtyTracker.markPushed();
+      await dirtyTracker.persist(this.db);
+
+      // 12. 通知
+      const changedTables: SyncableTableName[] = [
+        ...new Set([
+          ...mergeResult.pushChanges.map((c) => c.table),
+          ...(Object.keys(mergeResult.localWrites) as SyncableTableName[]),
+        ]),
+      ];
+      this.notifyComplete({
+        cursor: uploadResult.newVersion,
+        syncedAt: new Date().toISOString(),
+        changedTables,
+      });
+
+      return {
+        cursor: uploadResult.newVersion,
+        syncedAt: new Date().toISOString(),
+        changedTables,
+      };
+    } catch (error) {
+      // 增量推送失败：降级为全量
+      return this.fallbackToFullSync(
+        '增量推送失败：' + (error instanceof Error ? error.message : String(error)),
+      );
+    }
+  }
+
+  /** 降级为全量推送（带诊断信息）。 */
+  private async fallbackToFullSync(_reason: string): Promise<SyncResult> {
+    // 清空脏追踪（强制全量后状态会重建）
+    const dirtyTracker = getDirtyTracker();
+    const cache = new ChunkCache();
+    dirtyTracker.markPushed();
+    await dirtyTracker.persist(this.db);
+    cache.clear();
+    await cache.persist(this.db);
+
+    // 重新走全量推送：直接调 uploadSnapshot，不传 dirtyChunks
+    this.setStatus('syncing');
+    const extVersion = await this.readRemoteExtVersion();
+    const downloadResult = await this.backend.downloadSnapshot();
+    let remoteData: SnapshotData;
+    let remoteVersion: string;
+    if (extVersion.version && downloadResult.data) {
+      const payload = deserializeSnapshot(downloadResult.data);
+      remoteData = { tables: payload.tables as SnapshotData['tables'], tombstones: payload.tombstones as Tombstone[] };
+      remoteVersion = downloadResult.version;
+    } else {
+      remoteData = { tables: {}, tombstones: [] };
+      remoteVersion = '';
+    }
+
+    const localData = await this.readAllLocalData();
+    const localTables = toTimestampedTables(localData.tables);
+    const remoteTables = toTimestampedTables(remoteData.tables);
+    const mergeResult = mergeSnapshots(localTables, remoteTables, remoteData.tombstones);
+
+    suppressCapture(true);
+    try {
+      await this.applyMergeResult(mergeResult);
+    } finally {
+      suppressCapture(false);
+    }
+
+    const finalData = await this.readAllLocalData();
+    const serialized = serializeSnapshot(finalData);
+    const uploadResult = await this.retryOnConflict(serialized, remoteVersion);
+
+    // 推送成功后重建 chunkCache
+    const newManifest = await this.fetchRemoteManifest();
+    if (newManifest) {
+      cache.updateFromManifest(newManifest, this.collectChunkJsonMap(finalData));
+      await cache.persist(this.db);
+    }
+
+    const changedTables: SyncableTableName[] = [
+      ...new Set([
+        ...mergeResult.pushChanges.map((c) => c.table),
+        ...(Object.keys(mergeResult.localWrites) as SyncableTableName[]),
+      ]),
+    ];
+
+    return {
+      cursor: uploadResult.newVersion,
+      syncedAt: new Date().toISOString(),
+      changedTables,
+    };
+  }
+
+  /** 拉远端 manifest（用 GitHubBackend 私有方法）。 */
+  private async fetchRemoteManifest(): Promise<ChunkedManifest | null> {
+    // 通过类型断言访问 GitHubBackend 的扩展方法
+    const backend = this.backend as StorageBackend & {
+      readRawFile?: (path: string) => Promise<{ content: string; encoding: string } | null>;
+    };
+    if (!backend.readRawFile) {
+      return null;
+    }
+    try {
+      const raw = await backend.readRawFile('chunks/manifest.json');
+      if (!raw || !raw.content || raw.encoding !== 'base64') return null;
+      const json = base64ToUtf8(raw.content);
+      const parsed = JSON.parse(json) as ChunkedManifest;
+      if (typeof parsed.formatVersion !== 'number') return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 拉取指定的脏分片（基于 manifest 的 subChunks）。 */
+  private async fetchDirtyChunks(
+    manifest: ChunkedManifest | null,
+    dirtyChunks: Set<string>,
+  ): Promise<SnapshotData> {
+    if (!manifest) {
+      return { tables: {}, tombstones: [] };
+    }
+    const subNames: string[] = [];
+    for (const [chunkKey, meta] of Object.entries(manifest.chunks)) {
+      if (!dirtyChunks.has(chunkKey)) continue;
+      const subList = getSubChunkList(meta, chunkKey);
+      for (const sub of subList) subNames.push(sub.name);
+    }
+    // 通过 readRawFile 逐个拉（dirtySyncPath 已用 readRawFile 类型断言）
+    const backend = this.backend as StorageBackend & {
+      readRawFile?: (path: string) => Promise<{ content: string; encoding: string } | null>;
+    };
+    if (!backend.readRawFile) {
+      return { tables: {}, tombstones: [] };
+    }
+    const tables: Partial<Record<SyncableTableName, Record<string, unknown>[]>> = {};
+    let tombstones: Tombstone[] = [];
+    for (const subName of subNames) {
+      try {
+        const raw = await backend.readRawFile(`chunks/${subName}.json`);
+        if (!raw || !raw.content || raw.encoding !== 'base64') continue;
+        const json = base64ToUtf8(raw.content);
+        const payload = deserializeChunk(json);
+        if ('tables' in payload && payload.tables) {
+          for (const [table, rows] of Object.entries(payload.tables)) {
+            if (Array.isArray(rows)) {
+              (tables[table as SyncableTableName] ??= []).push(...rows);
+            }
+          }
+        } else if ('tombstones' in payload && Array.isArray(payload.tombstones)) {
+          tombstones = payload.tombstones;
+        }
+      } catch {
+        // 拉取失败由 caller 决定降级
+        throw new Error(`拉取分片 ${subName} 失败`);
+      }
+    }
+    return { tables, tombstones };
+  }
+
+  /** 从 cache + 脏分片 + 本地构建完整 SnapshotData。 */
+  private buildSnapshotFromCacheAndDirty(
+    cache: ChunkCache,
+    remoteData: SnapshotData,
+    localData: SnapshotData,
+    dirtyChunks: Set<string>,
+  ): SnapshotData {
+    const result: SnapshotData = { tables: { ...localData.tables }, tombstones: [] };
+    // 干净分片从 cache 取
+    for (const chunkName of cache.keys()) {
+      const logicalKey = chunkName.replace(/-[a-z]$/, '');
+      if (dirtyChunks.has(logicalKey)) continue;
+      const cached = cache.getChunk(chunkName);
+      if (cached) {
+        try {
+          const payload = JSON.parse(cached.json) as { tables?: Partial<Record<SyncableTableName, Record<string, unknown>[]>>; tombstones?: Tombstone[] };
+          if (payload.tables) {
+            for (const [table, rows] of Object.entries(payload.tables)) {
+              if (Array.isArray(rows)) {
+                result.tables[table as SyncableTableName] = rows as Record<string, unknown>[];
+              }
+            }
+          }
+        } catch {
+          // cache 条目损坏，跳过（将由降级逻辑兜底）
+        }
+      }
+    }
+    // 脏分片用远端（拉到的）+ 本地覆盖
+    for (const [table, rows] of Object.entries(remoteData.tables)) {
+      if (rows) {
+        result.tables[table as SyncableTableName] = rows as Record<string, unknown>[];
+      }
+    }
+    result.tombstones = remoteData.tombstones ?? [];
+    return result;
+  }
+
+  /** 收集 finalData → 子片名 → JSON map（用于 cache.updateFromManifest）。 */
+  private collectChunkJsonMap(
+    finalData: SnapshotData,
+  ): Map<string, string> {
+    const chunks = splitSnapshotIntoChunks(finalData);
+    const map = new Map<string, string>();
+    for (const { name, payload } of chunks) {
+      map.set(name, serializeChunk(payload));
+    }
+    return map;
   }
 
   // ==================== T3.3 拉取流程 ====================
