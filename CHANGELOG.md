@@ -180,6 +180,24 @@ v1.3.CloudSync-Chunked 按"表分组"切，但用户的 `blogs` 表有 56 条，
 理论上每片 200KB × 任意多片；实测 blogs 56 条 1.3MB → 切为 7+ 子片，每片 ~180KB，
 远端 100% 稳定。
 
+## [1.3.CloudSync-Chunked-3] - 移除 engine 层 900KB 单文件上限（关键修复）
+
+### 背景
+v1.3.CloudSync-Chunked-2 引入子切后，`GitHubBackend.uploadSnapshot` 已经在每片
+上传前做 `assertChunkFits(200KB)`，理论上 ≥1MB 的数据可以正常推送。
+但 `engine.ts` 在 `backend.uploadSnapshot` 调用**之前**还有三处
+`assertSnapshotFits(serialized)`，检查整个快照是否 ≤ 900KB（旧的单文件上限）。
+这导致 1.3MB 的本地数据被 engine 直接拦截，永远走不到 backend 的分片路径。
+
+### 修复
+- 移除 `engine.ts` 三处 `assertSnapshotFits(serialized)` 调用
+- 移除对应 import
+- 体积防护下沉到 `backend.uploadSnapshot` 内部的 `assertChunkFits`（每片粒度）
+
+### 验证
+- typecheck 0 错误
+- vitest 229/232（3 个 migration 历史问题）
+
 ### 修复
 
 - **同步白名单瘦身**（`db/sync/types.ts` + `db/sync/capture.ts` + `sync/engine.ts`）

@@ -33,7 +33,6 @@ import { suppressCapture } from '@/db/sync/capture';
 import { serializeSnapshot, deserializeSnapshot } from './snapshot';
 import { mergeSnapshots } from './merger';
 import { mapToSyncError } from './sync-error';
-import { assertSnapshotFits } from './size-guard';
 import type { SnapshotData } from './snapshot';
 
 /** 一个携带 id 和可选时间戳的记录。 */
@@ -253,8 +252,8 @@ export class SyncEngine {
       // 5. 构建最终快照
       const finalData = await this.readAllLocalData();
       const serialized = serializeSnapshot(finalData);
-      // 体积防护：避免远端再生成超大 state.json 撞 GitHub 单文件回包边界
-      assertSnapshotFits(serialized);
+      // 体积防护在 backend 内部按分片粒度做（assertChunkFits），
+      // engine 不再做单文件上限检查（v1.3-CloudSync-Chunked 后单文件已不存在）
 
       // 6. 推回远端
       const uploadResult = await this.backend.uploadSnapshot(
@@ -349,8 +348,7 @@ export class SyncEngine {
       // 5. 构建最终快照
       const finalData = await this.readAllLocalData();
       const serialized = serializeSnapshot(finalData);
-      // 体积防护：避免远端再生成超大 state.json 撞 GitHub 单文件回包边界
-      assertSnapshotFits(serialized);
+      // 体积防护在 backend 内部按分片粒度做（assertChunkFits）
 
       // 6. 上传，版本冲突时重试（最多 3 次）
       const uploadResult = await this.retryOnConflict(
@@ -433,8 +431,7 @@ export class SyncEngine {
 
                 const finalData = await this.readAllLocalData();
                 const newSerialized = serializeSnapshot(finalData);
-                // 体积防护：版本冲突重试拉取后仍要校验（避免本地+远端合并后仍超限）
-                assertSnapshotFits(newSerialized);
+                // 体积防护在 backend 内部按分片粒度做（assertChunkFits）
                 return await this.backend.uploadSnapshot(
                   newSerialized,
                   newRemoteVersion,
